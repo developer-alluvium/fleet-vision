@@ -1,0 +1,19 @@
+{
+  "name": "fleet-vision",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w web-dashboard\" \"npm run dev -w tcp-server\"",
+    "build": "turbo run build",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "turbo": "^2.5.0"
+  },
+  "packageManager": "npm@10.8.0"
+}
