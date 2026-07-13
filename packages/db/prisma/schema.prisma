@@ -1,0 +1,54 @@
+// ─── Prisma Schema ──────────────────────────────────────────
+// Fleet Vision — Telemetry Data Model
+//
+// Run `npx prisma generate` to generate the client after editing.
+// Run `npx prisma db push` to sync with the database.
+// Run `npx prisma migrate dev` for production-style migrations.
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A registered GPS tracking device (identified by its unique IMEI).
+model Device {
+  id        String   @id @default(cuid())
+  imei      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  telemetryRecords TelemetryRecord[]
+
+  @@map("devices")
+}
+
+/// A single telemetry data point received from a device.
+model TelemetryRecord {
+  id         String   @id @default(cuid())
+  time       DateTime
+  deviceId   String   @map("device_id")
+  latitude   Float
+  longitude  Float
+  speed      Float
+  altitude   Float
+  angle      Float
+  satellites Int      @default(0)
+  priority   Int
+  
+  isValid    Boolean  @default(true)
+  eventId    Int?     @map("event_id")
+  odometer   Float?
+
+  ioElements Json     @map("io_elements") @db.JsonB
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, time])
+  @@index([time])
+  @@map("telemetry_records")
+}

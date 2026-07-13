@@ -7,9 +7,20 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w web-dashboard\" \"npm run dev -w tcp-server\"",
+    "dev": "concurrently \"npm run dev -w web-dashboard\" \"npm run dev -w data-processor\"",
+    "dev:all": "concurrently \"npm run dev -w web-dashboard\" \"npm run dev -w tcp-server\" \"npm run dev -w data-processor\"",
+    "dev:tcp": "npm run dev -w tcp-server",
+    "dev:processor": "npm run dev -w data-processor",
+    "dev:dashboard": "npm run dev -w web-dashboard",
     "build": "turbo run build",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "db:generate": "npm run db:generate -w @fleet-vision/db",
+    "db:push": "npm run db:push -w @fleet-vision/db",
+    "db:migrate": "npm run db:migrate -w @fleet-vision/db",
+    "db:studio": "npm run db:studio -w @fleet-vision/db",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
