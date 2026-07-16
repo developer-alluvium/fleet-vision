@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -57,12 +58,15 @@ func handleConnection(conn net.Conn, producer *KafkaProducer) {
 			return
 		}
 
+		// Log raw hex payload for debugging / cross-parser comparison
+		log.Printf("[RAW HEX] IMEI=%s len=%d hex=%s", imei, len(packet.data), hex.EncodeToString(packet.data))
+
 		// Parse the AVL packet
 		avlPacket, err := parser.ParseAVLPacket(packet.data)
 		if err != nil {
 			log.Printf("[PARSE] %s (IMEI %s) parse error: %v", remoteAddr, imei, err)
 			// Send 0 ACK to signal error – device will resend
-			sendACK(conn, 0)
+			_ = sendACK(conn, 0)
 			continue
 		}
 
@@ -84,7 +88,7 @@ func handleConnection(conn net.Conn, producer *KafkaProducer) {
 		jsonBytes, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[CONN] %s (IMEI %s) JSON marshal error: %v", remoteAddr, imei, err)
-			sendACK(conn, 0)
+			_ = sendACK(conn, 0)
 			continue
 		}
 
@@ -97,13 +101,16 @@ func handleConnection(conn net.Conn, producer *KafkaProducer) {
 			log.Printf("[CONN] %s (IMEI %s) Kafka publish failed – NOT acknowledging device: %v",
 				remoteAddr, imei, err)
 			// Do NOT ACK the device – it will retry sending the same data
-			sendACK(conn, 0)
+			_ = sendACK(conn, 0)
 			continue
 		}
 
 		// ── Step 4: ACK the device ───────────────────────────
 		// Only after Kafka confirms the write
-		sendACK(conn, int(avlPacket.RecordCount))
+		if err := sendACK(conn, int(avlPacket.RecordCount)); err != nil {
+			log.Printf("[CONN] %s (IMEI %s) Failed to send ACK: %v", remoteAddr, imei, err)
+			return // Connection broken, exit loop
+		}
 		log.Printf("[CONN] %s (IMEI %s) ACK sent for %d records",
 			remoteAddr, imei, avlPacket.RecordCount)
 	}
@@ -219,9 +226,10 @@ func readAVLPacket(conn net.Conn) (*rawPacket, error) {
 }
 
 // sendACK writes the 4-byte acknowledgement (number of records accepted) to the device.
-func sendACK(conn net.Conn, recordCount int) {
+func sendACK(conn net.Conn, recordCount int) error {
 	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	ack := make([]byte, 4)
 	binary.BigEndian.PutUint32(ack, uint32(recordCount))
-	conn.Write(ack)
+	_, err := conn.Write(ack)
+	return err
 }

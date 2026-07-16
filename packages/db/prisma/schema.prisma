@@ -44,6 +44,11 @@ model TelemetryRecord {
   eventId    Int?     @map("event_id")
   odometer   Float?
 
+  /// Escort TD BLE fuel sensor data as JSON:
+  /// { "rawFuelLevel": int, "sensorBattery": int, "sensorTemp": int }
+  /// Sourced from AVL IDs: 331 (fuel level), 29 (battery %), 25 (temperature °C)
+  fuelSensor Json?    @map("fuel_sensor") @db.JsonB
+
   ioElements Json     @map("io_elements") @db.JsonB
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)

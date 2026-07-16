@@ -62,21 +62,40 @@ export async function processTelemetryMessage(
     });
 
     // ── 2. Batch-insert TelemetryRecords ─────────────────────
-    const telemetryData = records.map((record) => ({
-      time: new Date(record.timestamp),
-      deviceId: device.id,
-      latitude: record.latitude,
-      longitude: record.longitude,
-      speed: record.speed,
-      altitude: record.altitude,
-      angle: record.angle,
-      satellites: record.satellites,
-      priority: record.priority,
-      isValid: record.satellites >= 3,
-      eventId: record.event_id || null,
-      odometer: record.io_elements["199"] || record.io_elements["16"] || null,
-      ioElements: record.io_elements as object,
-    }));
+    const telemetryData = records.map((record) => {
+      // ── Build fuel sensor JSON (Escort TD BLE) ──────────────
+      // AVL 331 = raw fuel level, AVL 29 = sensor battery %, AVL 25 = sensor temp °C
+      const hasFs =
+        record.io_elements["331"] !== undefined ||
+        record.io_elements["29"] !== undefined ||
+        record.io_elements["25"] !== undefined;
+
+      const fuelSensor = hasFs
+        ? {
+            rawFuelLevel: record.io_elements["331"] ?? null,
+            sensorBattery: record.io_elements["29"] ?? null,
+            sensorTemp: record.io_elements["25"] ?? null,
+          }
+        : null;
+
+      return {
+        time: new Date(record.timestamp),
+        deviceId: device.id,
+        latitude: record.latitude,
+        longitude: record.longitude,
+        speed: record.speed,
+        altitude: record.altitude,
+        angle: record.angle,
+        satellites: record.satellites,
+        priority: record.priority,
+        isValid: record.satellites >= 3,
+        eventId: record.event_id || null,
+        odometer:
+          record.io_elements["199"] || record.io_elements["16"] || null,
+        fuelSensor,
+        ioElements: record.io_elements as object,
+      };
+    });
 
     const result = await tx.telemetryRecord.createMany({
       data: telemetryData,
