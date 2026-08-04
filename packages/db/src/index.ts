@@ -3,6 +3,17 @@ import { PrismaClient } from "@prisma/client";
 // Re-export all Prisma generated types for consumer packages
 export * from "@prisma/client";
 
+// Re-export Redis client and helpers
+export {
+  redis,
+  authorizeDevice,
+  revokeDevice,
+  getDeviceAuth,
+  updateLiveMap,
+  getLiveMap,
+  publishLocationUpdate,
+} from "./redis";
+
 // Global singleton to prevent multiple PrismaClient instances in development
 // (hot-reload creates new modules but we want to reuse the DB connection pool)
 const globalForPrisma = globalThis as unknown as {

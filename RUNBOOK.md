@@ -1,121 +1,145 @@
-# Fleet Vision - How to Run the Project
+# Fleet Vision Enterprise — Runbook
 
-This guide provides a detailed, step-by-step plan to start the Fleet Vision telematics platform from scratch.
+Quick-start guide to get the entire platform running from scratch.
 
 ## Prerequisites
 
-Before starting, ensure you have the following installed on your machine:
-1.  **Docker Desktop** (Required for PostgreSQL and Kafka)
-2.  **Node.js** (v18 or higher)
-3.  **Go** (v1.21 or higher)
+| Tool | Version | Check |
+|---|---|---|
+| Docker Desktop | Latest | `docker --version` |
+| Node.js | v20+ | `node --version` |
+| Go | v1.20+ | `go version` |
 
 ---
 
-## Step 1: Start Docker Desktop
+## Quick Start (5 Steps)
 
-The project relies on Docker to run PostgreSQL (database) and Kafka (message broker).
+### 1. Start Infrastructure
 
-1.  Open the Start Menu in Windows.
-2.  Search for **Docker Desktop** and open it.
-3.  Wait until the Docker icon in your system tray (bottom right corner) turns green or indicates that the "Docker Engine is running".
-4.  *Note: If you encounter an error stating `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`, it means Docker Desktop has not fully started yet.*
-
----
-
-## Step 2: Start Infrastructure Containers
-
-Once Docker Desktop is running, you need to spin up the required infrastructure (PostgreSQL and Kafka).
-
-1.  Open a terminal in the root of the project (`fleet-vision`).
-2.  Run the following command:
-    ```bash
-    npm run infra:up
-    ```
-3.  This command runs `docker compose up -d` in the background, downloading and starting the PostgreSQL and Kafka containers.
-4.  To verify they are running, you can use:
-    ```bash
-    docker ps
-    ```
-    You should see `fv-postgres` and `fv-kafka` listed and healthy.
-
----
-
-## Step 3: Initialize the Database
-
-With PostgreSQL running, you need to push the Prisma schema to create the necessary tables (`devices` and `telemetry_records`).
-
-1.  In your terminal at the project root, run:
-    ```bash
-    npm run db:push
-    ```
-2.  Prisma will connect to the database (using the `DATABASE_URL` in your `.env` file) and synchronize the schema.
-
----
-
-## Step 4: Start the Application Services
-
-The platform consists of three main services. You should open **three separate terminal windows** (all navigated to the `fleet-vision` root directory) to run them concurrently, allowing you to monitor their logs.
-
-### Terminal 1: Start the Go TCP Gateway
-This service listens for incoming connections from your Teltonika devices.
 ```bash
+npm run infra:up
+```
+
+Verify all 3 containers are healthy:
+
+```bash
+docker compose ps
+# Should show: fv-postgres (healthy), fv-redis (healthy), fv-kafka (healthy)
+```
+
+### 2. Install Dependencies + Initialize Database
+
+```bash
+# Install all npm dependencies
+npm install
+
+# Push Prisma schema to database
+npm run db:push
+
+# Create TimescaleDB hypertable (one-time only)
+docker exec fv-postgres psql -U postgres -d fleet_vision -c \
+  "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT create_hypertable('\"telemetry_records\"', 'time');"
+```
+
+### 3. Start All Services
+
+**Option A — Single terminal:**
+```bash
+npm run dev:all
+```
+
+**Option B — Separate terminals (recommended):**
+```bash
+# Terminal 1: Go TCP Gateway (port 8500)
 npm run dev:tcp
-```
-*Expected Output: You will see it listening on port 8500.*
 
-### Terminal 2: Start the Data Processor
-This service consumes messages from Kafka and writes them to the PostgreSQL database.
-```bash
+# Terminal 2: Data Processor (Kafka consumer)
 npm run dev:processor
-```
-*Expected Output: You will see it connect to PostgreSQL and subscribe to the Kafka topic.*
 
-### Terminal 3: Start the Web Dashboard (Optional)
-If you want to view the Next.js frontend application.
-```bash
+# Terminal 3: Web Dashboard (port 3000)
 npm run dev:dashboard
 ```
-*Expected Output: The Next.js app will be available at `http://localhost:3000`.*
 
-*(Shortcut: Alternatively, you can run `npm run dev:all` in a single terminal to start all three, but keeping them separate makes it easier to read logs).*
+### 4. Create Organization + Register Device
+
+```bash
+# Create org
+curl -X POST http://localhost:3000/api/v1/organizations \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Fleet", "adminEmail": "admin@myfleet.com"}'
+
+# Note the orgId from the response, then register a device:
+curl -X POST http://localhost:3000/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{"imei": "353456789012345", "orgId": "PASTE_ORG_ID"}'
+```
+
+### 5. View Data
+
+```bash
+# Open Prisma Studio (visual database browser)
+npm run db:studio
+# Opens at http://localhost:5555
+
+# Query live locations
+curl "http://localhost:3000/api/v1/live-locations?orgId=PASTE_ORG_ID"
+
+# Query historical data
+curl "http://localhost:3000/api/v1/history?imei=353456789012345&orgId=PASTE_ORG_ID"
+```
 
 ---
 
-## Step 5: View Your Data
+## All Available Commands
 
-You can use Prisma Studio, a visual database browser, to inspect the incoming data.
-
-1.  Open a new terminal at the project root.
-2.  Run:
-    ```bash
-    npm run db:studio
-    ```
-3.  This will open Prisma Studio in your web browser (usually at `http://localhost:5555`), allowing you to view the `devices` and `telemetry_records` tables.
-
----
-
-## Step 6: Connect Your FMC130 Device
-
-To send real data to your locally running server:
-
-1.  Find your computer's local IP address on your network by opening a command prompt and running `ipconfig` (look for IPv4 Address, e.g., `192.168.1.50`).
-2.  Connect your FMC130 device to your computer via USB.
-3.  Open the **Teltonika Configurator**.
-4.  Navigate to the **GPRS** section -> **Server Settings**.
-5.  Set the following:
-    *   **Domain:** Your local IP address (e.g., `192.168.1.50`)
-    *   **Port:** `8500`
-    *   **Protocol:** `TCP`
-6.  Click **Save to device**.
-
-*Note: If your device uses mobile data, it must be on the same network as your computer, OR you must configure port forwarding on your router to expose port 8500 to the internet.*
+| Command | Description |
+|---|---|
+| `npm run infra:up` | Start Docker containers (TimescaleDB + Redis + Kafka) |
+| `npm run infra:down` | Stop Docker containers |
+| `npm run infra:logs` | Tail container logs |
+| `npm run dev` | Start dashboard + processor |
+| `npm run dev:all` | Start all 3 services |
+| `npm run dev:tcp` | Start Go TCP Gateway only |
+| `npm run dev:processor` | Start data processor only |
+| `npm run dev:dashboard` | Start Next.js dashboard only |
+| `npm run db:generate` | Regenerate Prisma client |
+| `npm run db:push` | Push schema to database |
+| `npm run db:migrate` | Run production migrations |
+| `npm run db:studio` | Open Prisma Studio GUI |
+| `npm run build` | Build all packages |
+| `npm run lint` | Lint all packages |
 
 ---
 
 ## Stopping the Project
 
-When you are done, you can stop the services by pressing `Ctrl+C` in their respective terminal windows.
-To stop the Docker infrastructure, run:
 ```bash
+# Stop application services
+# Press Ctrl+C in each terminal
+
+# Stop infrastructure
 npm run infra:down
 ```
+
+---
+
+## Connecting a Teltonika Device
+
+1. Open **Teltonika Configurator**
+2. Go to **GPRS → Server Settings**
+3. Set **Domain:** your IP, **Port:** `8500`, **Protocol:** `TCP`
+4. Save to device
+
+> The device's IMEI must be registered via `POST /api/v1/devices` BEFORE it can send data.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Containers won't start | Check Docker is running: `docker info` |
+| Port conflict | Check: `lsof -i :5432`, `lsof -i :6379`, `lsof -i :9092` |
+| "Unauthorized IMEI" in processor logs | Register the device: `POST /api/v1/devices` |
+| Prisma errors | Regenerate: `npm run db:generate` |
+| No data appearing | Check Redis auth: `docker exec fv-redis redis-cli HGETALL "auth:YOUR_IMEI"` |

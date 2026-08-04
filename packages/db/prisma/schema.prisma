@@ -1,5 +1,5 @@
 // ─── Prisma Schema ──────────────────────────────────────────
-// Fleet Vision — Telemetry Data Model
+// Fleet Vision Enterprise — Multi-Tenant Telemetry Data Model
 //
 // Run `npx prisma generate` to generate the client after editing.
 // Run `npx prisma db push` to sync with the database.
@@ -7,53 +7,117 @@
 // ─────────────────────────────────────────────────────────────
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+/// A tenant organization — all resources are scoped to this entity.
+model Organization {
+  id                  String    @id @default(cuid())
+  name                String
+  status              String    @default("ACTIVE") // ACTIVE, SUSPENDED, CANCELLED
+  subscriptionPlan    String    @default("TRIAL") @map("subscription_plan")
+  subscriptionEndDate DateTime? @map("subscription_end_date")
+  stripeCustomerId    String?   @map("stripe_customer_id")
+  apiKey              String?   @unique @map("api_key")
+
+  users     User[]
+  devices   Device[]
+  vehicles  Vehicle[]
+  geofences Geofence[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("organizations")
+}
+
+/// A user belonging to an organization.
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  password       String?
+  role           String       @default("ADMIN") // ADMIN, MANAGER, VIEWER
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
 }
 
 /// A registered GPS tracking device (identified by its unique IMEI).
 model Device {
-  id        String   @id @default(cuid())
-  imei      String   @unique
+  id             String       @id @default(cuid())
+  imei           String       @unique
+  status         String       @default("PENDING_CONNECTION") // PENDING_CONNECTION, ONLINE, OFFLINE
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle        Vehicle?
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
-
-  telemetryRecords TelemetryRecord[]
 
   @@map("devices")
 }
 
+/// A vehicle linked to a tracking device.
+model Vehicle {
+  id              String       @id @default(cuid())
+  plateNumber     String       @unique @map("plate_number")
+  maxFuelCapacity Float?       @map("max_fuel_capacity")
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceId        String?      @unique @map("device_id")
+  device          Device?      @relation(fields: [deviceId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("vehicles")
+}
+
+/// A geofence polygon with PostGIS spatial indexing.
+model Geofence {
+  id             String       @id @default(cuid())
+  name           String
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// PostGIS Polygon + GiST Index for high-performance spatial queries
+  polygon Unsupported("geometry(Polygon, 4326)")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([polygon], type: Gist)
+  @@map("geofences")
+}
+
 /// A single telemetry data point received from a device.
+/// This table is converted to a TimescaleDB Hypertable keyed on `time`.
 model TelemetryRecord {
-  id         String   @id @default(cuid())
-  time       DateTime
-  deviceId   String   @map("device_id")
-  latitude   Float
-  longitude  Float
-  speed      Float
-  altitude   Float
-  angle      Float
-  satellites Int      @default(0)
-  priority   Int
-  
-  isValid    Boolean  @default(true)
-  eventId    Int?     @map("event_id")
-  odometer   Float?
+  id             String   @default(cuid())
+  time           DateTime @default(now()) @db.Timestamptz
+  imei           String
+  organizationId String   @map("organization_id")
+  latitude       Float?
+  longitude      Float?
+  speed          Float?
+  ignition       Boolean  @default(false)
+  ioElements     Json?    @map("io_elements") @db.JsonB
 
-  /// Escort TD BLE fuel sensor data as JSON:
-  /// { "rawFuelLevel": int, "sensorBattery": int, "sensorTemp": int }
-  /// Sourced from AVL IDs: 331 (fuel level), 29 (battery %), 25 (temperature °C)
-  fuelSensor Json?    @map("fuel_sensor") @db.JsonB
-
-  ioElements Json     @map("io_elements") @db.JsonB
-
-  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-
-  @@index([deviceId, time])
-  @@index([time])
+  @@id([id, time])
+  @@index([time(sort: Desc)])
+  @@index([imei, time(sort: Desc)])
+  @@index([organizationId, time(sort: Desc)])
   @@map("telemetry_records")
 }
+

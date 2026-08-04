@@ -1,618 +1,1073 @@
-# Fleet Vision — Complete Project Documentation
+# Fleet Vision Enterprise — Complete Documentation
 
-> **Fleet Vision** is a real-time **vehicle/fleet tracking platform** that receives GPS telemetry from **Teltonika FMC130** (or similar) tracking devices installed in vehicles, processes the data, stores it in a database, and displays it on a web dashboard.
+> **Fleet Vision** is a **multi-tenant, BYOD (Bring Your Own Device) telematics backend** that receives GPS telemetry from **Teltonika** tracking devices installed in vehicles, authenticates them against tenant organizations, processes the data through a high-throughput pipeline, and serves real-time + historical fleet data via REST APIs.
 
 ---
 
 ## Table of Contents
 
-1. [What Does Each Folder Do?](#1-what-does-each-folder-do)
-2. [How To Run The Project](#2-how-to-run-the-project)
-3. [How To Check Live Data From Your Office Devices](#3-how-to-check-live-data-from-your-office-devices)
-4. [What Details You Get From Devices](#4-what-details-you-get-from-devices)
-5. [Complete File Structure Explained](#5-complete-file-structure-explained)
-6. [Go Language File Structure Explained (For Beginners)](#6-go-language-file-structure-explained-for-beginners)
-7. [What Is The Use Of Kafka Here?](#7-what-is-the-use-of-kafka-here)
+1. [Architecture Overview](#1-architecture-overview)
+2. [Project Structure](#2-project-structure)
+3. [Tech Stack](#3-tech-stack)
+4. [Prerequisites](#4-prerequisites)
+5. [All Commands Reference](#5-all-commands-reference)
+6. [Step-by-Step: Running the Project](#6-step-by-step-running-the-project)
+7. [Standard User Flow (How It All Works Together)](#7-standard-user-flow)
+8. [API Documentation](#8-api-documentation)
+9. [API Testing & Documentation Tools](#9-api-testing--documentation-tools)
+10. [Database Schema](#10-database-schema)
+11. [Redis Data Structures](#11-redis-data-structures)
+12. [Background Workers](#12-background-workers)
+13. [Connecting a Teltonika Device](#13-connecting-a-teltonika-device)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
-## 1. What Does Each Folder Do?
-
-### 📡 `apps/tcp-server/` — The TCP Gateway (Written in Go)
-
-**Purpose:** This is the **first point of contact** for your tracking devices. It is a raw TCP server (NOT an HTTP server).
-
-**How it works:**
-1. Your Teltonika FMC130 device (installed in a vehicle) opens a **TCP connection** to this server on **port 8500**.
-2. The device sends its **IMEI number** (a 15-digit unique ID) as a handshake.
-3. The server validates the IMEI and replies with an acceptance byte (`0x01`).
-4. The device then starts sending **binary GPS data packets** (using Teltonika's "Codec 8" protocol).
-5. The server **parses the binary data** (latitude, longitude, speed, altitude, etc.) and converts it to JSON.
-6. The JSON is then **published to Kafka** (a message queue) on the `telemetry-raw` topic.
-7. Only after Kafka confirms the message is stored, the server sends an **ACK (acknowledgement)** back to the device.
-
-**In simple terms:** This is the "listener" — it talks to your GPS hardware and puts the data into the pipeline.
-
----
-
-### ⚙️ `apps/data-processor/` — The Data Processor (Written in TypeScript/Node.js)
-
-**Purpose:** This is a **background worker** that reads messages from Kafka and saves them into the PostgreSQL database.
-
-**How it works:**
-1. It connects to **Kafka** as a consumer and subscribes to the `telemetry-raw` topic.
-2. Whenever the TCP server pushes a new GPS message into Kafka, this processor **picks it up**.
-3. It **upserts the Device** (creates a new device record if this IMEI has never been seen, or updates the `updatedAt` timestamp).
-4. It **batch-inserts all TelemetryRecords** (GPS data points) into PostgreSQL in a single database transaction.
-5. Logs the result: how many records were inserted for which IMEI.
-
-**In simple terms:** This is the "saver" — it takes data from the pipeline and stores it permanently in the database.
-
----
-
-### 🖥️ `apps/web-dashboard/` — The Web Dashboard (Written in Next.js/React)
-
-**Purpose:** This is the **frontend web application** that you open in your browser to visualize the fleet data.
-
-**How it works:**
-- It's a **Next.js 15** app using the App Router with **Tailwind CSS v4** for styling.
-- Currently shows a clean landing page with a "System Online" status badge.
-- This is where you'll build out features like:
-  - Live map showing vehicle positions
-  - Vehicle trip history
-  - Speed/altitude charts
-  - Device management panel
-
-**In simple terms:** This is the "viewer" — the visual dashboard you use to see all the tracking data.
-
----
-
-### 📦 `packages/db/` — Shared Database Package
-
-**Purpose:** Contains the **Prisma ORM schema** and a shared database client that other apps import.
-
-**How it works:**
-- Defines the database tables (`devices` and `telemetry_records`) in `prisma/schema.prisma`.
-- Exports a singleton `PrismaClient` instance so both `data-processor` and `web-dashboard` can use the same database connection pattern.
-- Any app that needs database access imports from `@fleet-vision/db`.
-
----
-
-### 🔄 How They All Work Together (Data Flow)
+## 1. Architecture Overview
 
 ```
-┌──────────────┐     TCP/Binary     ┌──────────────┐      JSON       ┌─────────┐
-│  FMC130 GPS  │ ──────────────────▶│  tcp-server  │ ──────────────▶ │  Kafka  │
-│   Device     │   (Codec 8 data)   │  (Go, :8500) │  (publish msg)  │ (:9092) │
-└──────────────┘                    └──────────────┘                 └────┬────┘
-                                                                         │
-                                                                    (consume)
-                                                                         │
-                                                                         ▼
-┌──────────────┐                    ┌───────────────┐             ┌──────────────┐
-│ web-dashboard│◀───── reads ──────▶│  PostgreSQL   │◀── writes ──│data-processor│
-│  (Next.js)   │   from database    │   (:5432)     │             │  (Node.js)   │
-│   :3000      │                    │  fleet_vision │             │              │
-└──────────────┘                    └───────────────┘             └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        FLEET VISION ENTERPRISE                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌──────────┐    TCP/AVL     ┌──────────────┐    JSON     ┌─────────┐ │
+│   │ Teltonika ├──────────────►│  TCP Gateway  ├───────────►│  Kafka  │ │
+│   │  Device   │   Port 8500   │    (Go)       │            │ (KRaft) │ │
+│   └──────────┘                └──────────────┘            └────┬────┘ │
+│                                                                 │      │
+│                                                          eachBatch     │
+│                                                                 ▼      │
+│   ┌──────────────────────────────────────────────────────────────────┐ │
+│   │                    DATA PROCESSOR (Node.js)                      │ │
+│   │                                                                  │ │
+│   │  1. Read IMEI from message                                       │ │
+│   │  2. Query Redis: HGETALL auth:{imei}                            │ │
+│   │  3. If unauthorized → DROP packet                                │ │
+│   │  4. Inject orgId from Redis into each record                    │ │
+│   │  5. Update Redis Live Map: HSET live_map:org:{orgId}            │ │
+│   │  6. Bulk INSERT into TimescaleDB                                │ │
+│   └──────────┬───────────────────────────────────┬──────────────────┘ │
+│              │                                   │                     │
+│              ▼                                   ▼                     │
+│   ┌──────────────────┐                ┌──────────────────┐            │
+│   │      Redis       │                │   TimescaleDB    │            │
+│   │  • auth:{imei}   │                │   + PostGIS      │            │
+│   │  • live_map:org  │                │   (Hypertable)   │            │
+│   └────────┬─────────┘                └────────┬─────────┘            │
+│            │                                   │                       │
+│            ▼                                   ▼                       │
+│   ┌──────────────────────────────────────────────────────────────────┐ │
+│   │                  WEB DASHBOARD APIs (Next.js)                    │ │
+│   │                                                                  │ │
+│   │  Control Plane:                  Data Plane:                     │ │
+│   │  • POST /api/v1/organizations    • GET /api/v1/live-locations    │ │
+│   │  • POST /api/v1/devices          • GET /api/v1/history          │ │
+│   │  • GET  /api/v1/organizations                                    │ │
+│   │  • GET  /api/v1/devices                                          │ │
+│   └──────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│   Background Workers:                                                   │
+│   • Geofence Worker (PostGIS spatial queries)                          │
+│   • Subscription Enforcer (nightly — suspend expired orgs)             │
+│   • Cold Storage Archival (nightly — archive >6mo data to CSV)         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. How To Run The Project
+## 2. Project Structure
 
-### Prerequisites
+```
+fleet-vision/
+├── docker-compose.yml          # Infrastructure: TimescaleDB, Redis, Kafka
+├── .env                        # Environment variables (all services read from here)
+├── .env.example                # Template for .env
+├── package.json                # Root workspace config (npm workspaces + Turborepo)
+├── turbo.json                  # Turborepo pipeline configuration
+│
+├── packages/
+│   └── db/                     # Shared database + Redis package (@fleet-vision/db)
+│       ├── prisma/
+│       │   └── schema.prisma   # Database schema (6 models, PostGIS, Hypertable)
+│       ├── src/
+│       │   ├── index.ts        # Prisma client singleton + re-exports
+│       │   └── redis.ts        # Redis client singleton + auth/live-map helpers
+│       ├── package.json
+│       └── tsconfig.json
+│
+├── apps/
+│   ├── tcp-server/             # Go TCP Gateway (port 8500)
+│   │   ├── main.go             # Entry point — TCP listener + graceful shutdown
+│   │   ├── handler.go          # IMEI handshake + AVL packet parsing + Kafka publish
+│   │   ├── producer.go         # Kafka producer wrapper (kafka-go)
+│   │   ├── parser/
+│   │   │   ├── codec8.go       # Teltonika Codec 8/8E binary parser
+│   │   │   ├── codec8_test.go  # Parser unit tests
+│   │   │   └── types.go        # AVL data types
+│   │   ├── go.mod / go.sum
+│   │   └── package.json        # npm wrapper (for monorepo dev script)
+│   │
+│   ├── data-processor/         # Node.js Kafka Consumer + Background Workers
+│   │   ├── src/
+│   │   │   ├── index.ts        # Entry point — DB/Redis/Kafka init + shutdown
+│   │   │   ├── consumer.ts     # Kafka consumer (eachBatch mode)
+│   │   │   ├── processor.ts    # Multi-tenant telemetry processor
+│   │   │   └── workers/
+│   │   │       ├── geofence-worker.ts        # PostGIS spatial alert checks
+│   │   │       ├── subscription-enforcer.ts  # Nightly subscription check
+│   │   │       └── cold-storage.ts           # Archive old data to CSV
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   └── web-dashboard/          # Next.js App Router (API Routes + Frontend)
+│       ├── src/app/
+│       │   ├── api/v1/
+│       │   │   ├── organizations/route.ts    # POST + GET organizations
+│       │   │   ├── devices/route.ts          # POST + GET devices
+│       │   │   ├── live-locations/route.ts   # GET live fleet map (Redis)
+│       │   │   └── history/route.ts          # GET historical telemetry (TimescaleDB)
+│       │   ├── page.tsx        # Dashboard home page
+│       │   ├── layout.tsx      # Root layout
+│       │   └── globals.css     # Global styles
+│       ├── next.config.mjs
+│       ├── package.json
+│       └── tsconfig.json
+```
 
-Make sure you have these installed on your machine:
+---
 
-| Tool             | Version  | Download Link                                  |
-| ---------------- | -------- | ---------------------------------------------- |
-| **Node.js**      | v18+     | https://nodejs.org/                             |
-| **Go**           | v1.21+   | https://go.dev/dl/                              |
-| **Docker Desktop** | Latest | https://www.docker.com/products/docker-desktop/ |
+## 3. Tech Stack
 
-### Step-by-Step
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Database** | TimescaleDB (PostgreSQL 15) | Time-series telemetry storage with hypertable partitioning |
+| **Spatial** | PostGIS | Geofence polygon storage + spatial queries (ST_Contains) |
+| **Cache** | Redis | Device auth cache (O(1) IMEI lookup) + Live Map |
+| **Message Queue** | Apache Kafka (KRaft mode) | Decouple TCP ingestion from processing |
+| **TCP Gateway** | Go | High-performance binary protocol parsing (Teltonika Codec 8) |
+| **Data Processor** | Node.js + TypeScript | Kafka consumer, Redis auth, bulk DB inserts |
+| **API Server** | Next.js 15 (App Router) | REST API routes + future web dashboard |
+| **ORM** | Prisma 6 | Type-safe database access |
+| **Monorepo** | npm Workspaces + Turborepo | Shared packages, unified scripts |
 
-#### Step 1: Start Docker Desktop
+---
 
-Open Docker Desktop from the Start Menu. Wait until the icon in the system tray turns **green** (engine running). This is required because PostgreSQL and Kafka run as Docker containers.
+## 4. Prerequisites
 
-#### Step 2: Install Dependencies
+Before starting, ensure you have installed:
 
-Open a terminal in the `fleet-vision` root folder:
+| Tool | Minimum Version | Check Command |
+|---|---|---|
+| **Docker Desktop** | Latest | `docker --version` |
+| **Node.js** | v20+ | `node --version` |
+| **npm** | v10+ | `npm --version` |
+| **Go** | v1.20+ | `go version` |
+
+---
+
+## 5. All Commands Reference
+
+### Infrastructure Commands
+
+| Command | Description |
+|---|---|
+| `npm run infra:up` | Start all Docker containers (TimescaleDB, Redis, Kafka) |
+| `npm run infra:down` | Stop all Docker containers |
+| `npm run infra:logs` | Tail logs from all containers |
+| `docker compose ps` | Check container health status |
+
+### Database Commands
+
+| Command | Description |
+|---|---|
+| `npm run db:generate` | Generate Prisma client from schema |
+| `npm run db:push` | Push schema to database (dev — no migration files) |
+| `npm run db:migrate` | Run Prisma migrations (production-style) |
+| `npm run db:studio` | Open Prisma Studio (visual DB browser at http://localhost:5555) |
+
+### Application Commands
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Start web-dashboard + data-processor |
+| `npm run dev:all` | Start ALL services (dashboard + TCP server + processor) |
+| `npm run dev:dashboard` | Start only the Next.js web dashboard (http://localhost:3000) |
+| `npm run dev:processor` | Start only the data processor worker |
+| `npm run dev:tcp` | Start only the Go TCP gateway |
+| `npm run build` | Build all packages (Turborepo) |
+| `npm run lint` | Lint all packages |
+
+### TimescaleDB Hypertable (One-time Setup)
+
+After pushing the schema for the first time, run this to convert `telemetry_records` to a hypertable:
+
 ```bash
-npm install
+docker exec fv-postgres psql -U postgres -d fleet_vision -c \
+  "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT create_hypertable('\"telemetry_records\"', 'time');"
 ```
-This installs dependencies for **all workspaces** (web-dashboard, data-processor, and the shared db package).
 
-#### Step 3: Set Up Environment Variables
+### Redis CLI
 
-Copy the example env file (if you haven't already):
 ```bash
-copy .env.example .env
+# Connect to Redis
+docker exec -it fv-redis redis-cli
+
+# Check a device's auth status
+HGETALL auth:123456789012345
+
+# Check live map for an org
+HGETALL live_map:org:<orgId>
+
+# List all auth keys
+KEYS auth:*
 ```
 
-The `.env` file contains:
-```env
-# PostgreSQL connection string
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fleet_vision?schema=public"
+### PostgreSQL CLI
 
-# Kafka broker address
-KAFKA_BROKERS="localhost:9092"
+```bash
+# Connect to database
+docker exec -it fv-postgres psql -U postgres -d fleet_vision
 
-# Kafka topic name for raw telemetry data
-KAFKA_TOPIC="telemetry-raw"
+# List all tables
+\dt+
 
-# TCP port the Go server listens on
-TCP_PORT="8500"
+# Count telemetry records
+SELECT COUNT(*) FROM telemetry_records;
+
+# Check hypertable info
+SELECT * FROM timescaledb_information.hypertables;
 ```
 
-#### Step 4: Start Infrastructure (PostgreSQL + Kafka)
+---
+
+## 6. Step-by-Step: Running the Project
+
+### Step 1 — Start Docker
+
+Make sure Docker Desktop is running, then start all infrastructure:
 
 ```bash
 npm run infra:up
 ```
 
-This runs `docker compose up -d` which starts:
-- **fv-postgres** — PostgreSQL 16 database on port `5432`
-- **fv-kafka** — Apache Kafka on port `9092` (KRaft mode, no ZooKeeper needed)
+Verify all 3 containers are healthy:
 
-Verify they're running:
 ```bash
-docker ps
+docker compose ps
 ```
-You should see both `fv-postgres` and `fv-kafka` listed as **healthy**.
 
-#### Step 5: Initialize the Database
+You should see `fv-postgres`, `fv-redis`, and `fv-kafka` all with status `(healthy)`.
+
+### Step 2 — Initialize the Database
+
+Push the Prisma schema and create the TimescaleDB hypertable:
 
 ```bash
+# Push schema to database
 npm run db:push
+
+# Create the TimescaleDB hypertable (one-time only)
+docker exec fv-postgres psql -U postgres -d fleet_vision -c \
+  "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT create_hypertable('\"telemetry_records\"', 'time');"
 ```
 
-This uses Prisma to create the `devices` and `telemetry_records` tables in PostgreSQL.
+### Step 3 — Install Dependencies
 
-#### Step 6: Start All 3 Services
+```bash
+npm install
+```
 
-**Option A — All in one terminal (quick start):**
+### Step 4 — Start the Application
+
+**Option A — All services in one terminal:**
+
 ```bash
 npm run dev:all
 ```
 
-**Option B — Separate terminals (recommended, easier to read logs):**
+**Option B — Each service in a separate terminal (recommended for reading logs):**
 
-| Terminal | Command                  | What It Starts                     |
-| -------- | ------------------------ | ---------------------------------- |
-| 1        | `npm run dev:tcp`        | Go TCP Gateway on port `8500`      |
-| 2        | `npm run dev:processor`  | Data Processor (Kafka consumer)    |
-| 3        | `npm run dev:dashboard`  | Web Dashboard on `http://localhost:3000` |
+```bash
+# Terminal 1: TCP Gateway
+npm run dev:tcp
 
-### Useful Commands Reference
+# Terminal 2: Data Processor
+npm run dev:processor
 
-| Command              | What It Does                                    |
-| -------------------- | ----------------------------------------------- |
-| `npm run dev`        | Starts dashboard + data-processor only          |
-| `npm run dev:all`    | Starts all 3 services (TCP + processor + dashboard) |
-| `npm run dev:tcp`    | Starts only the Go TCP server                   |
-| `npm run dev:processor` | Starts only the data processor              |
-| `npm run dev:dashboard` | Starts only the Next.js dashboard            |
-| `npm run infra:up`   | Starts Docker containers (Postgres + Kafka)     |
-| `npm run infra:down` | Stops Docker containers                         |
-| `npm run infra:logs` | Shows live logs from Docker containers          |
-| `npm run db:push`    | Syncs Prisma schema to database                 |
-| `npm run db:studio`  | Opens Prisma Studio (visual DB browser at `:5555`) |
-| `npm run db:generate` | Regenerates Prisma client after schema changes |
-| `npm run build`      | Builds all projects for production              |
-| `npm run lint`       | Runs linting/type-checking on all projects      |
+# Terminal 3: Web Dashboard
+npm run dev:dashboard
+```
+
+### Step 5 — Provision Your First Organization & Device
+
+Use the Control Plane APIs (see Section 8 below) to create an organization and register your devices.
+
+### Step 6 — View Data
+
+```bash
+# Open Prisma Studio (visual database browser)
+npm run db:studio
+```
+
+Opens at http://localhost:5555
 
 ### Stopping Everything
 
-1. Press `Ctrl+C` in each terminal to stop the services.
-2. Stop Docker containers:
-   ```bash
-   npm run infra:down
-   ```
-
----
-
-## 3. How To Check Live Data From Your Office Devices
-
-### Step 1: Find Your Computer's IP Address
-
-Open a Command Prompt and run:
-```cmd
-ipconfig
-```
-Look for **IPv4 Address** under your active network adapter (Wi-Fi or Ethernet).  
-Example: `192.168.1.50`
-
-### Step 2: Configure the Teltonika FMC130 Device
-
-1. Connect the FMC130 device to your computer via **USB cable**.
-2. Open the **Teltonika Configurator** software.
-3. Go to **GPRS → Server Settings**.
-4. Set the following values:
-
-| Setting      | Value                                    |
-| ------------ | ---------------------------------------- |
-| **Domain**   | Your computer's IP (e.g., `192.168.1.50`) |
-| **Port**     | `8500`                                   |
-| **Protocol** | `TCP`                                    |
-
-5. Click **"Save to device"**.
-
-### Step 3: Make Sure Everything Is Running
-
-Ensure all 3 services are running (see [Step 6 above](#step-6-start-all-3-services)). The terminal running the TCP server should say:
-```
-[TCP] Listening on :8500 for Teltonika devices…
-```
-
-### Step 4: Watch Live Data Arrive
-
-Once the FMC130 connects, you'll see real-time logs in the TCP server terminal:
-
-```
-[CONN] New connection from 192.168.1.100:54321
-[CONN] 192.168.1.100:54321 identified as IMEI 352093089403706
-[PARSE] 192.168.1.100:54321 (IMEI 352093089403706) parsed 4 records (codec=0x08)
-[KAFKA] ✓ Published 1456 bytes (key=352093089403706)
-[CONN] 192.168.1.100:54321 (IMEI 352093089403706) ACK sent for 4 records
-```
-
-And in the data-processor terminal:
-```
-[PROCESSOR] Processing 4 records from IMEI 352093089403706 (codec8)
-[PROCESSOR] ✓ IMEI 352093089403706: upserted device clxyz..., inserted 4 records
-```
-
-### Step 5: View Data in Prisma Studio
-
-Open a new terminal and run:
 ```bash
-npm run db:studio
+# Stop application services: Ctrl+C in each terminal
+
+# Stop infrastructure
+npm run infra:down
 ```
-This opens a **visual database browser** at `http://localhost:5555`. You can click on:
-- **devices** table → see all connected devices with their IMEI
-- **telemetry_records** table → see all GPS data points with timestamps, coordinates, speed, etc.
-
-### ⚠️ Important Networking Notes
-
-| Scenario                          | What You Need                                    |
-| --------------------------------- | ------------------------------------------------ |
-| Device on **same Wi-Fi/LAN**      | Just use your local IP — works directly           |
-| Device on **mobile data (4G/5G)** | You need **port forwarding** on your router (forward external port 8500 → your computer's IP:8500) |
-| Device on a **different network** | Use port forwarding OR deploy to a cloud server with a public IP |
 
 ---
 
-## 4. What Details You Get From Devices
+## 7. Standard User Flow
 
-### GPS Data (Every Record)
+This section explains the **end-to-end usage flow** from the perspective of a fleet operator/admin.
 
-Every telemetry record from the FMC130 device contains:
-
-| Field          | Type     | Description                                       | Example          |
-| -------------- | -------- | ------------------------------------------------- | ---------------- |
-| **timestamp**  | DateTime | When the GPS reading was taken by the device       | `2026-07-09T08:30:00Z` |
-| **latitude**   | Float    | GPS latitude in degrees (× 10⁻⁷ precision)       | `19.0760`        |
-| **longitude**  | Float    | GPS longitude in degrees (× 10⁻⁷ precision)      | `72.8777`        |
-| **altitude**   | Int16    | Height above sea level in **meters**              | `14`             |
-| **speed**      | UInt16   | Vehicle speed in **km/h**                         | `67`             |
-| **angle**      | UInt16   | Direction of travel in **degrees** (0–360)        | `245`            |
-| **satellites** | UInt8    | Number of GPS satellites in view                  | `12`             |
-| **priority**   | UInt8    | Record priority (`0` = low/periodic, `1` = high, `2` = panic) | `0`  |
-
-### IO Elements (Sensor & Vehicle Data)
-
-In addition to GPS, each record includes **IO Elements** — these are sensor readings identified by numeric IDs. Common ones for the FMC130:
-
-| IO ID | Name                    | Description                                    |
-| ----- | ----------------------- | ---------------------------------------------- |
-| `239` | Ignition                | `0` = OFF, `1` = ON                            |
-| `240` | Movement                | `0` = stationary, `1` = moving                 |
-| `21`  | GSM Signal              | Signal strength (1–5)                          |
-| `200` | Sleep Mode              | `0` = no sleep, `1` = GPS sleep, `2` = deep sleep |
-| `69`  | GNSS Status             | `0` = OFF, `1` = ON (no fix), `2` = ON (fix)   |
-| `181` | GNSS PDOP               | Position dilution of precision                  |
-| `182` | GNSS HDOP               | Horizontal dilution of precision                |
-| `66`  | External Voltage        | Battery/power voltage in **mV**                |
-| `67`  | Battery Voltage         | Internal battery voltage in **mV**              |
-| `68`  | Battery Current         | Battery charging current in **mA**              |
-| `16`  | Total Odometer          | Total distance traveled in **meters**           |
-| `1`   | Digital Input 1 (DIN1)  | Digital input state                             |
-| `9`   | Analog Input 1          | Analog sensor reading in **mV**                 |
-| `113` | Battery Level           | Battery charge percentage (0–100%)              |
-| `24`  | Speed (OBD)             | Speed from vehicle's OBD port (if connected)    |
-| `205` | GSM Cell ID             | Currently connected cell tower ID               |
-| `206` | GSM Area Code           | Location Area Code of cell tower                |
-
-> **Note:** The exact IO elements you receive depend on how the device is configured in the Teltonika Configurator. You can enable/disable which sensors the device reports.
-
-### Device Information
-
-For each device, the database also stores:
-
-| Field       | Description                              |
-| ----------- | ---------------------------------------- |
-| **id**      | Unique internal ID (auto-generated CUID) |
-| **imei**    | 15-digit IMEI number (unique per device) |
-| **createdAt** | When the device first connected         |
-| **updatedAt** | Last time data was received             |
-
----
-
-## 5. Complete File Structure Explained
+### Flow Diagram
 
 ```
-fleet-vision/
-│
-├── .env                          # Environment variables (DB URL, Kafka config, TCP port)
-├── .env.example                  # Template for .env (safe to commit to git)
-├── .gitignore                    # Files/folders git should ignore
-├── package.json                  # ROOT workspace config — defines workspaces + shared scripts
-├── package-lock.json             # Locked dependency versions for reproducible installs
-├── turbo.json                    # Turborepo pipeline config (build/dev/lint task definitions)
-├── docker-compose.yml            # Docker config to run PostgreSQL + Kafka containers
-├── README.md                     # Project overview and basic setup instructions
-├── RUNBOOK.md                    # Detailed step-by-step guide to run the project
-│
-├── apps/                         # ── APPLICATION PROJECTS ──────────────────────
-│   │
-│   ├── tcp-server/               # ── GO TCP GATEWAY ───────────────────────────
-│   │   ├── package.json          # npm wrapper — `npm run dev` calls `node dev.js`
-│   │   ├── dev.js                # Node script that spawns `go run .` (for npm integration)
-│   │   ├── go.mod                # Go module definition (like package.json for Go)
-│   │   ├── go.sum                # Go dependency checksums (like package-lock.json for Go)
-│   │   ├── main.go               # Entry point — starts TCP listener, loads env, accepts connections
-│   │   ├── handler.go            # Connection lifecycle — IMEI handshake, packet reading, ACK
-│   │   ├── producer.go           # Kafka producer — publishes parsed JSON to Kafka topic
-│   │   └── parser/               # Sub-package for binary protocol parsing
-│   │       ├── types.go          # Data structures: AVLRecord, TelemetryMessage, AVLPacket
-│   │       └── codec8.go         # Teltonika Codec 8 / 8E binary parser + CRC-16 checksum
-│   │
-│   ├── data-processor/           # ── NODE.JS DATA PROCESSOR ──────────────────
-│   │   ├── package.json          # Dependencies: kafkajs, @fleet-vision/db, dotenv
-│   │   ├── tsconfig.json         # TypeScript compiler configuration
-│   │   └── src/
-│   │       ├── index.ts          # Entry point — connects to DB, starts Kafka consumer, shutdown
-│   │       ├── consumer.ts       # Kafka consumer setup — subscribes to `telemetry-raw` topic
-│   │       └── processor.ts      # Business logic — parses JSON, upserts device, inserts records
-│   │
-│   └── web-dashboard/            # ── NEXT.JS WEB DASHBOARD ───────────────────
-│       ├── package.json          # Dependencies: next, react, tailwindcss
-│       ├── next.config.mjs       # Next.js configuration
-│       ├── postcss.config.cjs    # PostCSS config (used by Tailwind CSS v4)
-│       ├── tsconfig.json         # TypeScript configuration
-│       ├── next-env.d.ts         # Auto-generated Next.js type declarations
-│       └── src/
-│           └── app/              # Next.js App Router directory
-│               ├── globals.css   # Global styles (Tailwind CSS imports)
-│               ├── layout.tsx    # Root layout — HTML shell, dark background, metadata
-│               └── page.tsx      # Home page — "Fleet Vision" heading + "System Online" badge
-│
-└── packages/                     # ── SHARED LIBRARIES ─────────────────────────
-    └── db/                       # ── DATABASE PACKAGE (@fleet-vision/db) ─────
-        ├── package.json          # Dependencies: @prisma/client, prisma, dotenv-cli
-        ├── tsconfig.json         # TypeScript configuration
-        ├── prisma/
-        │   └── schema.prisma     # DATABASE SCHEMA — defines Device + TelemetryRecord tables
-        └── src/
-            └── index.ts          # Exports singleton PrismaClient + re-exports Prisma types
+ADMIN USER                                    SYSTEM
+    │                                            │
+    │  1. Create Organization                    │
+    ├───────────────────────────────────────────►│
+    │     POST /api/v1/organizations             │
+    │     { name, adminEmail }                   │
+    │                                            │
+    │  ◄── Returns: orgId, userId ──────────────┤
+    │                                            │
+    │  2. Register Device(s)                     │
+    ├───────────────────────────────────────────►│
+    │     POST /api/v1/devices                   │
+    │     { imei: "353...", orgId }              │
+    │                                            │
+    │     ┌──────────────────────────────────┐   │
+    │     │ SYSTEM: Creates device in DB     │   │
+    │     │ SYSTEM: Writes auth:{imei} to    │   │
+    │     │         Redis with orgId         │   │
+    │     └──────────────────────────────────┘   │
+    │                                            │
+    │  3. Configure Physical Device              │
+    │     (Teltonika Configurator)                │
+    │     Set server IP + port 8500              │
+    │                                            │
+    │  ═══════════ DATA STARTS FLOWING ══════════│
+    │                                            │
+    │  Device → TCP Server → Kafka → Processor   │
+    │  Processor checks Redis auth → ✓ Valid     │
+    │  Processor injects orgId into data         │
+    │  Processor updates Redis Live Map          │
+    │  Processor bulk-inserts into TimescaleDB   │
+    │                                            │
+    │  4. View Live Fleet Map                    │
+    ├───────────────────────────────────────────►│
+    │     GET /api/v1/live-locations?orgId=xxx   │
+    │                                            │
+    │  ◄── Returns: all devices with             │
+    │      lat/lon/speed/ignition (from Redis)   │
+    │                                            │
+    │  5. View Historical Trip Data              │
+    ├───────────────────────────────────────────►│
+    │     GET /api/v1/history?imei=353...        │
+    │         &orgId=xxx                         │
+    │         &start=2026-01-01                  │
+    │         &end=2026-01-31                    │
+    │                                            │
+    │  ◄── Returns: time-series telemetry data   │
+    │      (from TimescaleDB)                    │
+    │                                            │
 ```
 
-### What Is Each Config File For?
+### Step-by-Step Breakdown
 
-| File                 | Purpose                                                                 |
-| -------------------- | ----------------------------------------------------------------------- |
-| `package.json` (root)| Defines this as an **npm workspace monorepo**. Lists workspace paths (`apps/*`, `packages/*`) and shared scripts. |
-| `turbo.json`         | Configures **Turborepo** — defines task pipeline (which tasks depend on which, what to cache). |
-| `docker-compose.yml` | Defines the **Docker containers** for PostgreSQL and Kafka. Run with `npm run infra:up`. |
-| `.env`               | **Environment variables** shared by all apps (database URL, Kafka address, TCP port). |
-| `.gitignore`         | Tells Git to ignore `node_modules/`, `.next/`, `.env`, build outputs, Go binaries, etc. |
+#### Step 1: Create Your Organization
 
----
+An admin creates their fleet organization. This is the **tenant** — all data is isolated per organization.
 
-## 6. Go Language File Structure Explained (For Beginners)
-
-Since you're new to Go, here's a beginner-friendly explanation of the Go files in `apps/tcp-server/`:
-
-### How Go Projects Are Organized
-
-| Concept            | Go Equivalent         | Node.js/TS Equivalent      |
-| ------------------ | --------------------- | -------------------------- |
-| Module definition  | `go.mod`              | `package.json`             |
-| Dependency lock    | `go.sum`              | `package-lock.json`        |
-| Package            | `package main`        | A folder with `index.ts`   |
-| Entry point        | `func main()`         | The main script in `package.json` |
-| Imports            | `import "fmt"`        | `import fs from "fs"`      |
-| Exported function  | `func MyFunc()` (capitalized) | `export function myFunc()` |
-| Private function   | `func myFunc()` (lowercase)  | Non-exported function      |
-
-### `go.mod` — Module Definition (like `package.json`)
-
-```go
-module fleet-vision/tcp-server   // Module name (like "name" in package.json)
-
-go 1.26.4                        // Go version
-
-require github.com/segmentio/kafka-go v0.4.51   // External dependency
+```bash
+curl -X POST http://localhost:3000/api/v1/organizations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ABC Transport Co.",
+    "adminEmail": "admin@abctransport.com"
+  }'
 ```
 
-- **`module`** — declares the module name. Other files import sub-packages relative to this.
-- **`require`** — lists dependencies (like `"dependencies"` in `package.json`).
-- **`go.sum`** — auto-generated checksums for all dependencies (like `package-lock.json`). **Never edit this manually.**
-
-### `main.go` — Entry Point (like `index.ts`)
-
-```go
-package main          // Every Go file declares which package it belongs to.
-                      // "main" is special — it means this is an executable program.
-
-import (              // Import standard library and external packages
-    "fmt"             // Standard library: formatting/printing
-    "log"             // Standard library: logging
-    "net"             // Standard library: networking (TCP/UDP)
-    "os"              // Standard library: OS operations (env vars, signals)
-)
-
-func main() {        // The entry point — Go always starts here.
-    // Your code...
+**Response:**
+```json
+{
+  "organization": {
+    "id": "cm5xyz...",
+    "name": "ABC Transport Co.",
+    "status": "ACTIVE",
+    "subscriptionPlan": "TRIAL",
+    "createdAt": "2026-08-01T12:00:00.000Z"
+  },
+  "user": {
+    "id": "cm5abc...",
+    "email": "admin@abctransport.com",
+    "role": "ADMIN",
+    "organizationId": "cm5xyz..."
+  }
 }
 ```
 
-**Key things for beginners:**
-- In Go, **every `.go` file in the same folder** must have the same `package` declaration.
-- All `.go` files in the `tcp-server/` folder say `package main` — they're all part of the same executable.
-- You **don't need to import other files** in the same package. Go automatically includes them.
-  - For example, `main.go` can call `handleConnection()` which is defined in `handler.go` — no import needed!
-- `func main()` is the program's entry point (like the main script in Node.js).
+> **Save the `organization.id`** — you'll need it for all subsequent calls.
 
-### `handler.go` — Connection Handler
+#### Step 2: Register Your GPS Devices
 
-This file handles each device connection. Key Go concepts:
+For each Teltonika device you want to track, register its IMEI:
 
-```go
-// Goroutine — Go's way of running things in parallel (like async in Node.js)
-go handleConnection(conn, producer)   // "go" keyword launches a goroutine
+```bash
+curl -X POST http://localhost:3000/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "imei": "353456789012345",
+    "orgId": "cm5xyz..."
+  }'
+```
 
-// Defer — runs when the function returns (like "finally" in try/catch)
-defer conn.Close()                    // Ensures the connection is closed when done
+**What happens behind the scenes:**
+1. Device record created in PostgreSQL
+2. **Redis auth cache updated:** `HSET auth:353456789012345 isAuthorized true orgId cm5xyz...`
+3. The TCP server + data processor will now **accept** data from this IMEI
 
-// Error handling — Go returns errors as values (no try/catch!)
-imei, err := performIMEIHandshake(conn)
-if err != nil {                       // Always check if err is not nil
-    log.Printf("handshake failed: %v", err)
-    return
+#### Step 3: Configure the Physical Device
+
+Using **Teltonika Configurator** software:
+1. Connect your FMC130/FMB920 device via USB
+2. Go to **GPRS → Server Settings**
+3. Set **Domain:** your server IP, **Port:** `8500`, **Protocol:** `TCP`
+4. Save to device
+
+Once configured, the device will start sending GPS data automatically.
+
+#### Step 4: View Live Fleet Locations
+
+```bash
+curl "http://localhost:3000/api/v1/live-locations?orgId=cm5xyz..."
+```
+
+**Response (from Redis — instant):**
+```json
+{
+  "orgId": "cm5xyz...",
+  "deviceCount": 2,
+  "devices": {
+    "353456789012345": {
+      "imei": "353456789012345",
+      "latitude": 28.6139,
+      "longitude": 77.2090,
+      "speed": 45.5,
+      "ignition": true,
+      "timestamp": "2026-08-01T12:30:00.000Z",
+      "updatedAt": "2026-08-01T12:30:01.123Z"
+    },
+    "353456789012346": {
+      "imei": "353456789012346",
+      "latitude": 19.0760,
+      "longitude": 72.8777,
+      "speed": 0,
+      "ignition": false,
+      "timestamp": "2026-08-01T12:28:00.000Z",
+      "updatedAt": "2026-08-01T12:28:01.456Z"
+    }
+  }
 }
 ```
 
-**Why it looks different from TypeScript:**
-- Go has **no classes**. It uses functions and structs.
-- Go has **no `try/catch`**. Functions return `(result, error)` and you check the error.
-- Go has **no `async/await`**. It uses **goroutines** (lightweight threads) with the `go` keyword.
-- Go has **no generics** (in older versions). Types are explicit.
+#### Step 5: View Historical Trip Data
 
-### `producer.go` — Kafka Producer
+```bash
+curl "http://localhost:3000/api/v1/history?imei=353456789012345&orgId=cm5xyz...&start=2026-08-01T00:00:00Z&end=2026-08-01T23:59:59Z"
+```
 
-```go
-// Struct — Go's version of a class (but with no inheritance)
-type KafkaProducer struct {
-    writer *kafka.Writer      // * means "pointer to" (reference type)
+**Response (from TimescaleDB):**
+```json
+{
+  "imei": "353456789012345",
+  "orgId": "cm5xyz...",
+  "count": 1440,
+  "timeRange": {
+    "start": "2026-08-01T00:00:00.000Z",
+    "end": "2026-08-01T23:59:59.000Z"
+  },
+  "records": [
+    {
+      "id": "cm5rec...",
+      "time": "2026-08-01T12:30:00.000Z",
+      "imei": "353456789012345",
+      "organizationId": "cm5xyz...",
+      "latitude": 28.6139,
+      "longitude": 77.2090,
+      "speed": 45.5,
+      "ignition": true,
+      "ioElements": { "239": 1, "240": 0, "21": 3 }
+    }
+  ]
 }
-
-// Method — A function attached to a struct (like a class method)
-func (p *KafkaProducer) Publish(ctx context.Context, key string, value []byte) error {
-    // "p" is like "this" or "self"
-    return p.writer.WriteMessages(ctx, msg)
-}
 ```
-
-### `parser/` — Sub-Package
-
-The `parser/` folder is a **separate Go package**:
-
-```go
-package parser        // Different package name — not "main"
-```
-
-Files in `parser/` are imported by the main package:
-
-```go
-import "fleet-vision/tcp-server/parser"    // Import the sub-package
-
-result, err := parser.ParseAVLPacket(data)  // Call an exported function
-```
-
-**Rule:** In Go, a function/type is **exported** (public) if its name starts with a **capital letter**:
-- `ParseAVLPacket` → ✅ exported (other packages can call it)
-- `parseAVLRecord` → ❌ unexported (only usable within the `parser` package)
-
-### Summary: All Go Files and Their Purpose
-
-| File                 | Package   | Purpose                                         |
-| -------------------- | --------- | ------------------------------------------------ |
-| `main.go`            | `main`    | Entry point: loads config, starts TCP listener, accepts connections |
-| `handler.go`         | `main`    | Manages device lifecycle: IMEI handshake → data loop → ACK |
-| `producer.go`        | `main`    | Kafka producer: publishes JSON messages to Kafka  |
-| `parser/types.go`    | `parser`  | Data types: `AVLRecord`, `TelemetryMessage`, `AVLPacket` |
-| `parser/codec8.go`   | `parser`  | Binary parser for Teltonika Codec 8/8E protocol + CRC check |
 
 ---
 
-## 7. What Is The Use Of Kafka Here?
+## 8. API Documentation
 
-### The Problem Kafka Solves
-
-Without Kafka, the architecture would look like:
+### Base URL
 
 ```
-Device → TCP Server → directly writes to PostgreSQL
+http://localhost:3000/api/v1
 ```
-
-**This has problems:**
-1. **If the database is slow or down**, the TCP server would block, and devices would timeout and disconnect.
-2. **If 500 devices send data simultaneously**, the TCP server would need 500 simultaneous DB connections.
-3. **If the DB write fails**, the data is **lost forever**.
-
-### How Kafka Fixes This
-
-Kafka acts as a **buffer/queue** between the TCP server and the database:
-
-```
-Device → TCP Server → Kafka (buffer) → Data Processor → PostgreSQL
-```
-
-### Why This Architecture Is Better
-
-| Benefit                  | Explanation |
-| ------------------------ | ----------- |
-| **Decoupling**           | The TCP server and database processor are **independent**. If the data-processor crashes, the TCP server keeps running and Kafka holds the messages safely. |
-| **Reliability**          | Kafka **persists messages to disk**. Even if the data-processor is down for an hour, no data is lost — messages wait in the queue. |
-| **Backpressure handling** | If 1000 devices send data at once, Kafka absorbs the burst. The data-processor consumes at its own pace. |
-| **Scalability**          | You can run **multiple data-processor instances** consuming from the same Kafka topic to process data faster. |
-| **Ordering guarantee**   | Messages are partitioned by **IMEI (device ID)**, so all data from one device is processed in order. |
-| **Replay capability**    | If you need to reprocess data (e.g., after fixing a bug), you can reset the consumer offset and replay messages from Kafka. |
-
-### How Kafka Works In This Project
-
-```
-                    ┌──────────────────────────────────┐
-                    │          Kafka Broker             │
-                    │        (localhost:9092)            │
-                    │                                   │
-                    │   Topic: "telemetry-raw"          │
-                    │   ┌─────────┬─────────┬────────┐  │
-  TCP Server ──────▶│   │ Part. 0 │ Part. 1 │ Part.2 │  │──────▶ Data Processor
-  (Producer)        │   │(IMEI A) │(IMEI B) │(IMEI C)│  │        (Consumer)
-                    │   └─────────┴─────────┴────────┘  │
-                    └──────────────────────────────────┘
-```
-
-1. **TCP Server** (the **producer**) publishes each telemetry message with the device IMEI as the **key**.
-2. Kafka uses the key to **hash-partition** — all messages from the same device go to the same partition.
-3. **Data Processor** (the **consumer**) reads messages from the topic, processes them, and inserts into PostgreSQL.
-4. The consumer is in a **consumer group** (`data-processor-group`) — if you run multiple instances, Kafka distributes partitions between them.
-
-### Kafka Configuration in This Project
-
-| Setting                  | Value               | Why                                           |
-| ------------------------ | ------------------- | ---------------------------------------------- |
-| Mode                     | **KRaft**           | No ZooKeeper needed (simpler setup)            |
-| Replication Factor       | `1`                 | Single-node dev setup (increase in production) |
-| Auto-Create Topics       | `true`              | The `telemetry-raw` topic is created automatically |
-| Producer `RequiredAcks`  | `RequireAll`        | Maximum durability — wait for all replicas     |
-| Producer `Async`         | `false`             | Synchronous — device is only ACK'd after Kafka confirms |
-| Consumer `autoCommit`    | `true` (every 5s)   | Offsets are saved periodically                 |
-| Consumer `fromBeginning` | `false`             | Only process new messages (not historical)     |
 
 ---
 
-## Quick Reference Card
+### 8.1 Control Plane APIs (Provisioning)
 
-| Service          | Language    | Port   | Command                 |
-| ---------------- | ----------- | ------ | ----------------------- |
-| TCP Gateway      | Go          | `8500` | `npm run dev:tcp`       |
-| Data Processor   | TypeScript  | —      | `npm run dev:processor` |
-| Web Dashboard    | Next.js     | `3000` | `npm run dev:dashboard` |
-| PostgreSQL       | —           | `5432` | `npm run infra:up`      |
-| Kafka            | —           | `9092` | `npm run infra:up`      |
-| Prisma Studio    | —           | `5555` | `npm run db:studio`     |
+These APIs are used by administrators to set up organizations and register devices.
+
+---
+
+#### `POST /api/v1/organizations`
+
+Creates a new tenant organization with an admin user.
+
+**Request:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | Organization name |
+| `adminEmail` | string | ✅ | Email of the initial admin user |
+
+**Request Body:**
+```json
+{
+  "name": "ABC Transport Co.",
+  "adminEmail": "admin@abctransport.com"
+}
+```
+
+**Success Response:** `201 Created`
+```json
+{
+  "organization": {
+    "id": "cm5xyz...",
+    "name": "ABC Transport Co.",
+    "status": "ACTIVE",
+    "subscriptionPlan": "TRIAL",
+    "subscriptionEndDate": null,
+    "stripeCustomerId": null,
+    "createdAt": "2026-08-01T12:00:00.000Z",
+    "updatedAt": "2026-08-01T12:00:00.000Z"
+  },
+  "user": {
+    "id": "cm5abc...",
+    "email": "admin@abctransport.com",
+    "role": "ADMIN",
+    "organizationId": "cm5xyz...",
+    "createdAt": "2026-08-01T12:00:00.000Z",
+    "updatedAt": "2026-08-01T12:00:00.000Z"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| `400` | Missing or invalid `name` | `{ "error": "name is required and must be a non-empty string" }` |
+| `400` | Missing or invalid `adminEmail` | `{ "error": "adminEmail is required and must be a valid email" }` |
+| `409` | Email already exists | `{ "error": "A user with this email already exists" }` |
+| `500` | Server error | `{ "error": "Internal server error" }` |
+
+---
+
+#### `GET /api/v1/organizations`
+
+Lists all organizations with device/user/vehicle counts.
+
+**Request:** No parameters required.
+
+**Success Response:** `200 OK`
+```json
+{
+  "organizations": [
+    {
+      "id": "cm5xyz...",
+      "name": "ABC Transport Co.",
+      "status": "ACTIVE",
+      "subscriptionPlan": "TRIAL",
+      "createdAt": "2026-08-01T12:00:00.000Z",
+      "_count": {
+        "users": 1,
+        "devices": 5,
+        "vehicles": 3
+      }
+    }
+  ]
+}
+```
+
+---
+
+#### `POST /api/v1/devices`
+
+Registers a new GPS device and authorizes it in the Redis auth cache.
+
+**Request:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `imei` | string | ✅ | 15-digit IMEI number of the device |
+| `orgId` | string | ✅ | Organization ID to register the device under |
+
+**Request Body:**
+```json
+{
+  "imei": "353456789012345",
+  "orgId": "cm5xyz..."
+}
+```
+
+**Success Response:** `201 Created`
+```json
+{
+  "device": {
+    "id": "cm5dev...",
+    "imei": "353456789012345",
+    "status": "PENDING_CONNECTION",
+    "organizationId": "cm5xyz...",
+    "createdAt": "2026-08-01T12:00:00.000Z",
+    "updatedAt": "2026-08-01T12:00:00.000Z"
+  }
+}
+```
+
+**Side Effect:** Writes to Redis: `HSET auth:353456789012345 isAuthorized true orgId cm5xyz...`
+
+**Error Responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| `400` | Invalid IMEI (not 15 digits) | `{ "error": "imei must contain exactly 15 digits" }` |
+| `400` | Missing orgId | `{ "error": "orgId is required" }` |
+| `403` | Org is suspended/cancelled | `{ "error": "Organization is not active" }` |
+| `404` | Org not found | `{ "error": "Organization not found" }` |
+| `409` | IMEI already registered | `{ "error": "A device with this IMEI is already registered" }` |
+| `500` | Server error | `{ "error": "Internal server error" }` |
+
+---
+
+#### `GET /api/v1/devices?orgId=xxx`
+
+Lists all devices for an organization.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `orgId` | string | ✅ | Organization ID |
+
+**Success Response:** `200 OK`
+```json
+{
+  "devices": [
+    {
+      "id": "cm5dev...",
+      "imei": "353456789012345",
+      "status": "PENDING_CONNECTION",
+      "organizationId": "cm5xyz...",
+      "createdAt": "2026-08-01T12:00:00.000Z",
+      "vehicle": null
+    }
+  ]
+}
+```
+
+---
+
+### 8.2 Data Plane APIs (Consumption)
+
+These APIs are used by dashboard UIs and client applications to view fleet data.
+
+---
+
+#### `GET /api/v1/live-locations?orgId=xxx`
+
+Returns real-time locations for all devices in an organization. **Reads from Redis only — O(1) response time.**
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `orgId` | string | ✅ | Organization ID |
+
+**Success Response:** `200 OK`
+```json
+{
+  "orgId": "cm5xyz...",
+  "deviceCount": 2,
+  "devices": {
+    "353456789012345": {
+      "imei": "353456789012345",
+      "latitude": 28.6139,
+      "longitude": 77.2090,
+      "speed": 45.5,
+      "ignition": true,
+      "timestamp": "2026-08-01T12:30:00.000Z",
+      "updatedAt": "2026-08-01T12:30:01.123Z"
+    }
+  }
+}
+```
+
+> **Note:** This endpoint returns an empty `devices` object `{}` if no telemetry data has been received yet. Devices must be registered AND actively sending data to appear here.
+
+**Error Responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| `400` | Missing orgId | `{ "error": "orgId query parameter is required" }` |
+| `500` | Server error | `{ "error": "Internal server error" }` |
+
+---
+
+#### `GET /api/v1/history`
+
+Returns historical telemetry records from TimescaleDB. Enforces strict tenant isolation.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `imei` | string | ✅ | Device IMEI to query |
+| `orgId` | string | ✅ | Organization ID (for tenant isolation) |
+| `start` | ISO 8601 date | ❌ | Start of time range (default: 24 hours ago) |
+| `end` | ISO 8601 date | ❌ | End of time range (default: now) |
+
+**Example:**
+```
+GET /api/v1/history?imei=353456789012345&orgId=cm5xyz...&start=2026-08-01T00:00:00Z&end=2026-08-01T23:59:59Z
+```
+
+**Success Response:** `200 OK`
+```json
+{
+  "imei": "353456789012345",
+  "orgId": "cm5xyz...",
+  "count": 48,
+  "timeRange": {
+    "start": "2026-08-01T00:00:00.000Z",
+    "end": "2026-08-01T23:59:59.000Z"
+  },
+  "records": [
+    {
+      "id": "cm5rec...",
+      "time": "2026-08-01T12:30:00.000Z",
+      "imei": "353456789012345",
+      "organizationId": "cm5xyz...",
+      "latitude": 28.6139,
+      "longitude": 77.2090,
+      "speed": 45.5,
+      "ignition": true,
+      "ioElements": {
+        "239": 1,
+        "240": 0,
+        "21": 3
+      }
+    }
+  ]
+}
+```
+
+**Error Responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| `400` | Missing imei | `{ "error": "imei query parameter is required" }` |
+| `400` | Missing orgId | `{ "error": "orgId query parameter is required" }` |
+| `400` | Invalid date format | `{ "error": "start must be a valid ISO 8601 date" }` |
+| `500` | Server error | `{ "error": "Internal server error" }` |
+
+> **Security:** The query always includes `WHERE organizationId = orgId`. Organization A **cannot** query Organization B's data even if they know the IMEI.
+
+---
+
+## 9. API Testing & Documentation Tools
+
+### Recommended: Bruno (Free, Open Source)
+
+**Bruno** is the recommended tool for both API testing and documentation. It is:
+- ✅ **Free and open source** (no account needed)
+- ✅ **Offline-first** — collections are stored as files in your project (git-friendly)
+- ✅ **Lightweight** — no cloud sync, no telemetry
+- ✅ **Import from Postman/Insomnia** if you're migrating
+
+**Install:**
+```bash
+# Ubuntu/Debian
+sudo apt install bruno
+
+# Or download from: https://www.usebruno.com/downloads
+```
+
+**Usage:**
+1. Open Bruno
+2. Create a new collection (e.g., `Fleet Vision API`)
+3. Create folders: `Control Plane`, `Data Plane`
+4. Add requests for each API endpoint (see Section 8)
+5. Set the base URL to `http://localhost:3000`
+6. Save the collection inside your project (e.g., `fleet-vision/bruno/`)
+
+---
+
+### Alternative: Postman (if you prefer a GUI)
+
+1. Download from https://www.postman.com/downloads/
+2. Create a new Collection called **Fleet Vision API**
+3. Set a collection variable: `baseUrl = http://localhost:3000`
+4. Add requests for each endpoint
+5. **Export** the collection as a JSON file and commit it to your repo
+
+---
+
+### Alternative: curl (Command Line)
+
+All API examples in this doc use curl. Here's a quick reference:
+
+```bash
+# Create org
+curl -X POST http://localhost:3000/api/v1/organizations \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Test Org", "adminEmail": "admin@test.com"}'
+
+# Register device
+curl -X POST http://localhost:3000/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{"imei": "353456789012345", "orgId": "PASTE_ORG_ID_HERE"}'
+
+# List orgs
+curl http://localhost:3000/api/v1/organizations
+
+# List devices
+curl "http://localhost:3000/api/v1/devices?orgId=PASTE_ORG_ID_HERE"
+
+# Live locations
+curl "http://localhost:3000/api/v1/live-locations?orgId=PASTE_ORG_ID_HERE"
+
+# History
+curl "http://localhost:3000/api/v1/history?imei=353456789012345&orgId=PASTE_ORG_ID_HERE"
+```
+
+---
+
+### For API Documentation Generation
+
+| Tool | Type | Best For |
+|---|---|---|
+| **Bruno** | Desktop app | Testing + git-versioned collections |
+| **Swagger/OpenAPI** | Spec file | Auto-generated interactive docs |
+| **Postman** | Desktop/Cloud | Team collaboration + mock servers |
+| **Hoppscotch** | Web-based | Quick browser testing (https://hoppscotch.io) |
+
+---
+
+## 10. Database Schema
+
+### Entity Relationship Diagram
+
+```
+┌──────────────────┐
+│   Organization   │
+├──────────────────┤       ┌────────────┐
+│ id (PK)          │──────►│    User    │
+│ name             │  1:N  ├────────────┤
+│ status           │       │ id (PK)    │
+│ subscriptionPlan │       │ email (UQ) │
+│ subscriptionEnd  │       │ role       │
+│ stripeCustomerId │       │ orgId (FK) │
+│ createdAt        │       └────────────┘
+│ updatedAt        │
+└──────┬───────────┘
+       │
+       ├──── 1:N ──►┌────────────┐        ┌────────────┐
+       │            │   Device   │  1:1   │  Vehicle   │
+       │            ├────────────┤◄──────►├────────────┤
+       │            │ id (PK)    │        │ id (PK)    │
+       │            │ imei (UQ)  │        │ plateNo(UQ)│
+       │            │ status     │        │ maxFuel    │
+       │            │ orgId (FK) │        │ deviceId   │
+       │            └────────────┘        │ orgId (FK) │
+       │                                  └────────────┘
+       │
+       ├──── 1:N ──►┌────────────────┐
+       │            │   Geofence     │
+       │            ├────────────────┤
+       │            │ id (PK)        │
+       │            │ name           │
+       │            │ polygon (GiST) │  ← PostGIS geometry(Polygon, 4326)
+       │            │ orgId (FK)     │
+       │            └────────────────┘
+       │
+       └──── (via orgId) ──►┌─────────────────────┐
+                            │  TelemetryRecord    │  ← TimescaleDB Hypertable
+                            ├─────────────────────┤
+                            │ id + time (PK)      │  ← Composite PK for hypertable
+                            │ imei                │
+                            │ organizationId      │
+                            │ latitude, longitude │
+                            │ speed, ignition     │
+                            │ ioElements (JSONB)  │
+                            └─────────────────────┘
+```
+
+### Key Design Decisions
+
+- **TelemetryRecord uses composite PK `(id, time)`** — TimescaleDB requires the partitioning column (`time`) in all unique constraints
+- **Geofence uses `Unsupported("geometry(Polygon, 4326)")`** — PostGIS type managed outside Prisma
+- **No foreign key** from TelemetryRecord → Device — intentional for hypertable write performance
+- **`organizationId` on TelemetryRecord** — denormalized from Redis at processing time for query performance
+
+---
+
+## 11. Redis Data Structures
+
+### Auth Cache — `auth:{imei}`
+
+**Type:** Hash  
+**Purpose:** O(1) device authentication during telemetry processing  
+**Set by:** `POST /api/v1/devices` route  
+**Read by:** Data processor (every Kafka message)
+
+```
+KEY: auth:353456789012345
+FIELDS:
+  isAuthorized = "true"
+  orgId = "cm5xyz..."
+```
+
+### Live Map — `live_map:org:{orgId}`
+
+**Type:** Hash  
+**Purpose:** Real-time device locations for instant fleet map queries  
+**Set by:** Data processor (after processing each batch)  
+**Read by:** `GET /api/v1/live-locations` route
+
+```
+KEY: live_map:org:cm5xyz...
+FIELDS:
+  353456789012345 = '{"imei":"353456789012345","latitude":28.61,"longitude":77.20,"speed":45.5,"ignition":true,"timestamp":"...","updatedAt":"..."}'
+  353456789012346 = '{"imei":"353456789012346","latitude":19.07,"longitude":72.87,"speed":0,"ignition":false,...}'
+```
+
+---
+
+## 12. Background Workers
+
+### Geofence Worker
+
+**Location:** `apps/data-processor/src/workers/geofence-worker.ts`  
+**Trigger:** After each telemetry batch is processed  
+**What it does:** Runs a raw PostGIS `ST_Contains` query to check if any device's new coordinates fall inside a geofence polygon for its organization. Logs alerts.
+
+### Subscription Enforcer
+
+**Location:** `apps/data-processor/src/workers/subscription-enforcer.ts`  
+**Trigger:** Nightly cron  
+**What it does:**
+1. Finds orgs where `subscriptionEndDate < NOW()` and `status = ACTIVE`
+2. Sets status to `SUSPENDED`
+3. Deletes all `auth:{imei}` entries for that org's devices from Redis → data processor will drop their future packets
+
+### Cold Storage Archival
+
+**Location:** `apps/data-processor/src/workers/cold-storage.ts`  
+**Trigger:** Nightly cron  
+**What it does:**
+1. Exports `telemetry_records` older than 6 months to compressed `.csv.gz` files
+2. Uploads to AWS S3 (currently stubbed — saves to local `archives/` directory)
+3. Deletes archived rows from TimescaleDB to reclaim storage
+
+---
+
+## 13. Connecting a Teltonika Device
+
+### Supported Devices
+
+Any Teltonika device that uses **Codec 8 / Codec 8 Extended** protocol:
+- FMC130
+- FMB920
+- FMB140
+- FMC640
+- And others in the Teltonika lineup
+
+### Configuration Steps
+
+1. **Connect** the device to your computer via USB
+2. Open **Teltonika Configurator** software
+3. Navigate to **GPRS → Server Settings**
+4. Configure:
+   - **Domain:** Your server's IP address (e.g., `192.168.1.50` for local, or public IP/domain for production)
+   - **Port:** `8500`
+   - **Protocol:** `TCP`
+5. Click **Save to device**
+
+> **Important:** If the device uses mobile data (SIM card), your server must be reachable from the internet. For local testing, the device and server must be on the same network.
+
+### What Happens After Connection
+
+1. Device opens TCP connection to port 8500
+2. Device sends IMEI handshake → Server validates format → replies `0x01`
+3. Device sends binary AVL packets → Server parses → publishes JSON to Kafka
+4. Data processor reads from Kafka → checks Redis auth → processes + stores data
+5. Data appears in the Live Map and History APIs
+
+---
+
+## 14. Troubleshooting
+
+### Containers Won't Start
+
+```bash
+# Check Docker is running
+docker info
+
+# Check for port conflicts
+lsof -i :5432   # PostgreSQL
+lsof -i :6379   # Redis
+lsof -i :9092   # Kafka
+
+# View container logs
+docker compose logs postgres
+docker compose logs redis
+docker compose logs kafka
+```
+
+### Data Processor Shows "Unauthorized IMEI"
+
+This means the device's IMEI hasn't been registered via `POST /api/v1/devices`. Register it first.
+
+```bash
+# Check Redis for the IMEI
+docker exec fv-redis redis-cli HGETALL "auth:YOUR_IMEI_HERE"
+```
+
+### Prisma Errors
+
+```bash
+# Regenerate Prisma client
+npm run db:generate
+
+# Force reset database (WARNING: deletes all data)
+cd packages/db && npx dotenv -e ../../.env -- prisma db push --force-reset
+```
+
+### Kafka Connection Issues
+
+```bash
+# Check Kafka is healthy
+docker exec fv-kafka kafka-broker-api-versions --bootstrap-server localhost:9092
+
+# List topics
+docker exec fv-kafka kafka-topics --bootstrap-server localhost:9092 --list
+```

@@ -1,12 +1,33 @@
 const { spawn } = require('child_process');
 
-const goPath = "C:\\Program Files\\Go\\bin\\go.exe";
+const fs = require('fs');
 
-console.log("Starting TCP Gateway using absolute Go path...");
+let goPath = 'go';
+if (process.platform === 'win32') {
+  const winDefault = "C:\\Program Files\\Go\\bin\\go.exe";
+  if (fs.existsSync(winDefault)) {
+    goPath = winDefault;
+  }
+} else {
+  const path = require('path');
+  const linuxCandidates = [
+    '/usr/local/go/bin/go',
+    '/usr/bin/go',
+    path.join(process.env.HOME || '', 'go', 'bin', 'go')
+  ];
+  for (const candidate of linuxCandidates) {
+    if (fs.existsSync(candidate)) {
+      goPath = candidate;
+      break;
+    }
+  }
+}
+
+console.log(`Starting TCP Gateway using Go binary (${goPath})...`);
 
 const child = spawn(goPath, ['run', '.'], {
   stdio: 'inherit',
-  shell: false
+  shell: true
 });
 
 child.on('error', (err) => {

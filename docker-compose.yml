@@ -1,9 +1,7 @@
-version: "3.9"
-
 services:
-  # ─── PostgreSQL ─────────────────────────────────────────────
+  # ─── TimescaleDB + PostGIS ──────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb-ha:pg15-latest
     container_name: fv-postgres
     restart: unless-stopped
     ports:
@@ -18,6 +16,21 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
+      retries: 5
+
+  # ─── Redis (Auth Cache + Live Map) ──────────────────────────
+  redis:
+    image: redis:alpine
+    container_name: fv-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
   # ─── Kafka (KRaft mode – no ZooKeeper) ─────────────────────
@@ -58,4 +71,5 @@ services:
 
 volumes:
   pg_data:
+  redis_data:
   kafka_data:

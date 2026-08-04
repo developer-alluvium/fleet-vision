@@ -1,4 +1,4 @@
-import { prisma } from "@fleet-vision/db";
+import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, Prisma } from "@fleet-vision/db";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -22,87 +22,142 @@ interface TelemetryMessage {
   server_timestamp: string;
 }
 
+// ─── Counters ────────────────────────────────────────────────
+
+let processedCount = 0;
+let droppedCount = 0;
+
+export function getProcessorStats() {
+  return { processedCount, droppedCount };
+}
+
 /**
- * Processes a single Kafka message containing telemetry data.
+ * Processes a batch of Kafka messages containing telemetry data.
  *
  * For each message:
- *  1. Upserts the Device by IMEI (creates on first contact)
- *  2. Batch-inserts all TelemetryRecords in a single transaction
+ *  1. Extract IMEI → Query Redis auth cache (HGETALL auth:{imei})
+ *  2. If not authorized → drop the packet
+ *  3. Inject orgId from Redis into each telemetry record
+ *  4. Update the Live Map in Redis (HSET live_map:org:{orgId} {imei} {latest payload})
+ *  5. Bulk insert all valid records into TimescaleDB
  */
-export async function processTelemetryMessage(
-  rawValue: Buffer | null
+export async function processTelemetryBatch(
+  messages: Array<{ value: Buffer | null }>
 ): Promise<void> {
-  if (!rawValue) {
-    console.warn("[PROCESSOR] Received null message value – skipping");
-    return;
-  }
+  // Collect all valid records with their orgIds
+  const validRecords: Array<{
+    time: Date;
+    imei: string;
+    organizationId: string;
+    latitude: number | null;
+    longitude: number | null;
+    speed: number | null;
+    ignition: boolean;
+    ioElements: Prisma.InputJsonValue | undefined;
+  }> = [];
 
-  const message: TelemetryMessage = JSON.parse(rawValue.toString());
-  const { imei, records, codec } = message;
+  // Track live map updates to batch at the end
+  const liveMapUpdates: Map<
+    string,
+    { orgId: string; imei: string; payload: object }
+  > = new Map();
 
-  if (!imei || !records || records.length === 0) {
-    console.warn("[PROCESSOR] Invalid message structure – skipping", {
+  for (const msg of messages) {
+    if (!msg.value) continue;
+
+    let message: TelemetryMessage;
+    try {
+      message = JSON.parse(msg.value.toString());
+    } catch (err) {
+      console.warn("[PROCESSOR] Invalid JSON in message – skipping:", err);
+      droppedCount++;
+      continue;
+    }
+
+    const { imei, records } = message;
+
+    if (!imei || !records || records.length === 0) {
+      console.warn("[PROCESSOR] Invalid message structure – skipping", {
+        imei,
+        recordCount: records?.length,
+      });
+      droppedCount++;
+      continue;
+    }
+
+    // ── 1. Query Redis auth cache ──────────────────────────
+    const auth = await getDeviceAuth(imei);
+    if (!auth) {
+      console.warn(
+        `[PROCESSOR] ✗ Unauthorized IMEI ${imei} – dropping ${records.length} records`
+      );
+      droppedCount++;
+      continue;
+    }
+
+    const { orgId } = auth;
+
+    // ── 2. Build telemetry records with orgId injected ─────
+    for (const record of records) {
+      // Detect ignition from io_elements (AVL ID 239 is standard for ignition)
+      const ignition =
+        record.io_elements["239"] === 1 ||
+        record.io_elements["ignition"] === 1 ||
+        false;
+
+      validRecords.push({
+        time: new Date(record.timestamp),
+        imei,
+        organizationId: orgId,
+        latitude: record.latitude ?? null,
+        longitude: record.longitude ?? null,
+        speed: record.speed ?? null,
+        ignition,
+        ioElements: (record.io_elements as Prisma.InputJsonValue) ?? undefined,
+      });
+    }
+
+    // ── 3. Prepare live map update (latest record per device) ──
+    const latestRecord = records[records.length - 1];
+    liveMapUpdates.set(imei, {
+      orgId,
       imei,
-      recordCount: records?.length,
+      payload: {
+        imei,
+        latitude: latestRecord.latitude,
+        longitude: latestRecord.longitude,
+        speed: latestRecord.speed,
+        ignition:
+          latestRecord.io_elements["239"] === 1 ||
+          latestRecord.io_elements["ignition"] === 1 ||
+          false,
+        timestamp: latestRecord.timestamp,
+        updatedAt: new Date().toISOString(),
+      },
     });
+  }
+
+  if (validRecords.length === 0) {
     return;
   }
+
+  // ── 4. Bulk insert into TimescaleDB ────────────────────
+  const result = await prisma.telemetryRecord.createMany({
+    data: validRecords,
+  });
+
+  processedCount += result.count;
 
   console.log(
-    `[PROCESSOR] Processing ${records.length} records from IMEI ${imei} (${codec})`
+    `[PROCESSOR] ✓ Bulk inserted ${result.count} records from ${liveMapUpdates.size} devices`
   );
 
-  // Use a transaction for atomicity: device upsert + record inserts
-  await prisma.$transaction(async (tx) => {
-    // ── 1. Upsert Device by IMEI ─────────────────────────────
-    const device = await tx.device.upsert({
-      where: { imei },
-      create: { imei },
-      update: { updatedAt: new Date() },
-    });
-
-    // ── 2. Batch-insert TelemetryRecords ─────────────────────
-    const telemetryData = records.map((record) => {
-      // ── Build fuel sensor JSON (Escort TD BLE) ──────────────
-      // AVL 331 = raw fuel level, AVL 29 = sensor battery %, AVL 25 = sensor temp °C
-      const hasFs =
-        record.io_elements["331"] !== undefined ||
-        record.io_elements["29"] !== undefined ||
-        record.io_elements["25"] !== undefined;
-
-      const fuelSensor = hasFs
-        ? {
-            rawFuelLevel: record.io_elements["331"] ?? null,
-            sensorBattery: record.io_elements["29"] ?? null,
-            sensorTemp: record.io_elements["25"] ?? null,
-          }
-        : null;
-
-      return {
-        time: new Date(record.timestamp),
-        deviceId: device.id,
-        latitude: record.latitude,
-        longitude: record.longitude,
-        speed: record.speed,
-        altitude: record.altitude,
-        angle: record.angle,
-        satellites: record.satellites,
-        priority: record.priority,
-        isValid: record.satellites >= 3,
-        eventId: record.event_id || null,
-        odometer:
-          record.io_elements["199"] || record.io_elements["16"] || null,
-        fuelSensor,
-        ioElements: record.io_elements as object,
-      };
-    });
-
-    const result = await tx.telemetryRecord.createMany({
-      data: telemetryData,
-    });
-
-    console.log(
-      `[PROCESSOR] ✓ IMEI ${imei}: upserted device ${device.id}, inserted ${result.count} records`
-    );
-  });
+  // ── 5. Update Live Map in Redis and Publish via Pub/Sub ──
+  const liveMapPromises = Array.from(liveMapUpdates.values()).map(
+    ({ orgId, imei, payload }) => Promise.all([
+      updateLiveMap(orgId, imei, payload),
+      publishLocationUpdate(orgId, imei, payload),
+    ])
+  );
+  await Promise.all(liveMapPromises);
 }
