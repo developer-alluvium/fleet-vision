@@ -50,6 +50,8 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  refreshTokens RefreshToken[]
+
   @@map("users")
 }
 
@@ -60,7 +62,8 @@ model Device {
   status         String       @default("PENDING_CONNECTION") // PENDING_CONNECTION, ONLINE, OFFLINE
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  vehicle        Vehicle?
+  vehicleId      String?      @unique @map("vehicle_id")
+  vehicle        Vehicle?     @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -72,11 +75,18 @@ model Device {
 model Vehicle {
   id              String       @id @default(cuid())
   plateNumber     String       @unique @map("plate_number")
+  make            String?
+  model           String?
+  year            Int?
+  color           String?
+  vin             String?      @unique
+  vehicleType     String?      @map("vehicle_type") // CAR, TRUCK, VAN, etc.
+  status          String       @default("ACTIVE") // ACTIVE, MAINTENANCE, INACTIVE
+  fuelType        String?      @map("fuel_type") // PETROL, DIESEL, ELECTRIC, HYBRID
   maxFuelCapacity Float?       @map("max_fuel_capacity")
   organizationId  String       @map("organization_id")
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  deviceId        String?      @unique @map("device_id")
-  device          Device?      @relation(fields: [deviceId], references: [id])
+  device          Device?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -104,15 +114,17 @@ model Geofence {
 /// A single telemetry data point received from a device.
 /// This table is converted to a TimescaleDB Hypertable keyed on `time`.
 model TelemetryRecord {
-  id             String   @default(cuid())
-  time           DateTime @default(now()) @db.Timestamptz
-  imei           String
-  organizationId String   @map("organization_id")
-  latitude       Float?
-  longitude      Float?
-  speed          Float?
-  ignition       Boolean  @default(false)
-  ioElements     Json?    @map("io_elements") @db.JsonB
+  id              String   @default(cuid())
+  time            DateTime @default(now()) @db.Timestamptz
+  imei            String
+  organizationId  String   @map("organization_id")
+  latitude        Float?
+  longitude       Float?
+  speed           Float?
+  angle           Float?
+  ignition        Boolean  @default(false)
+  ioElements      Json?    @map("io_elements") @db.JsonB
+  serverCreatedAt DateTime @default(now()) @map("server_created_at") @db.Timestamptz
 
   @@id([id, time])
   @@index([time(sort: Desc)])
@@ -121,3 +133,15 @@ model TelemetryRecord {
   @@map("telemetry_records")
 }
 
+/// A refresh token for a user session
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("refresh_tokens")
+}

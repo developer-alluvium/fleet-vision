@@ -1,4 +1,4 @@
-import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, Prisma } from "@fleet-vision/db";
+import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma } from "@fleet-vision/db";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -62,6 +62,21 @@ export async function processTelemetryBatch(
     { orgId: string; imei: string; payload: object }
   > = new Map();
 
+  // Track ALL individual records per device for journey stream publishing
+  const journeyRecords: Map<
+    string,
+    {
+      orgId: string;
+      records: Array<{
+        latitude: number | null;
+        longitude: number | null;
+        speed: number | null;
+        ignition: boolean;
+        timestamp: string;
+      }>;
+    }
+  > = new Map();
+
   for (const msg of messages) {
     if (!msg.value) continue;
 
@@ -98,6 +113,12 @@ export async function processTelemetryBatch(
     const { orgId } = auth;
 
     // ── 2. Build telemetry records with orgId injected ─────
+    // Also collect per-device journey records for SSE publishing
+    if (!journeyRecords.has(imei)) {
+      journeyRecords.set(imei, { orgId, records: [] });
+    }
+    const deviceJourney = journeyRecords.get(imei)!;
+
     for (const record of records) {
       // Detect ignition from io_elements (AVL ID 239 is standard for ignition)
       const ignition =
@@ -112,8 +133,19 @@ export async function processTelemetryBatch(
         latitude: record.latitude ?? null,
         longitude: record.longitude ?? null,
         speed: record.speed ?? null,
+        angle: record.angle ?? null,
         ignition,
         ioElements: (record.io_elements as Prisma.InputJsonValue) ?? undefined,
+      });
+
+      // Collect for journey stream (every individual record)
+      deviceJourney.records.push({
+        latitude: record.latitude ?? null,
+        longitude: record.longitude ?? null,
+        speed: record.speed ?? null,
+        angle: record.angle ?? null,
+        ignition,
+        timestamp: record.timestamp,
       });
     }
 
@@ -127,6 +159,7 @@ export async function processTelemetryBatch(
         latitude: latestRecord.latitude,
         longitude: latestRecord.longitude,
         speed: latestRecord.speed,
+        angle: latestRecord.angle,
         ignition:
           latestRecord.io_elements["239"] === 1 ||
           latestRecord.io_elements["ignition"] === 1 ||
@@ -160,4 +193,15 @@ export async function processTelemetryBatch(
     ])
   );
   await Promise.all(liveMapPromises);
+
+  // ── 6. Publish ALL individual records to journey Pub/Sub channels ──
+  // This enables the journey SSE stream to receive every GPS point in real-time
+  const journeyPromises = Array.from(journeyRecords.entries()).map(
+    ([deviceImei, { orgId, records }]) => {
+      // Sort records chronologically before publishing
+      records.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      return publishJourneyRecords(orgId, deviceImei, records);
+    }
+  );
+  await Promise.all(journeyPromises);
 }

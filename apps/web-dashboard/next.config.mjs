@@ -5,3 +5,5 @@ const nextConfig = {
 };
 
 export default nextConfig;
+
+// Triggered a hard restart to clear Prisma client from globalThis cache

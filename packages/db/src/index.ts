@@ -12,6 +12,7 @@ export {
   updateLiveMap,
   getLiveMap,
   publishLocationUpdate,
+  publishJourneyRecords,
 } from "./redis";
 
 // Global singleton to prevent multiple PrismaClient instances in development
@@ -19,6 +20,11 @@ export {
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
+
+// Clear cached instance if schema changed in development
+if (process.env.NODE_ENV !== "production") {
+  delete globalForPrisma.prisma;
+}
 
 export const prisma =
   globalForPrisma.prisma ??

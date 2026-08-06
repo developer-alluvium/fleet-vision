@@ -90,7 +90,8 @@ export async function getLiveMap(
 /**
  * Publishes a location update to Redis Pub/Sub channels.
  * Channel 1: location:org:{orgId}   → consumed by fleet stream SSE
- * Channel 2: location:device:{imei} → consumed by journey stream SSE
+ * Channel 2: location:device:{imei} → consumed by single-device live location
+ * NOTE: This publishes only the LATEST record per batch (for fleet map / live marker).
  */
 export async function publishLocationUpdate(
   orgId: string,
@@ -102,4 +103,47 @@ export async function publishLocationUpdate(
     redis.publish(`location:org:${orgId}`, message),
     redis.publish(`location:device:${imei}`, message),
   ]);
+}
+
+// ─── Journey Stream Helpers ──────────────────────────────────
+
+/**
+ * Publishes each individual telemetry record to the journey Pub/Sub channel.
+ * Uses Redis pipeline to batch all PUBLISH commands into a single round-trip
+ * (O(1) network cost regardless of record count).
+ *
+ * Channel: journey:device:{imei} → consumed by journey stream SSE
+ *
+ * Unlike publishLocationUpdate (which sends only the latest record per batch),
+ * this function publishes EVERY record so that the journey SSE stream can
+ * render the full vehicle path in real-time.
+ */
+export async function publishJourneyRecords(
+  orgId: string,
+  imei: string,
+  records: Array<{
+    latitude: number | null;
+    longitude: number | null;
+    speed: number | null;
+    ignition: boolean;
+    timestamp: string;
+  }>
+): Promise<void> {
+  if (records.length === 0) return;
+
+  const pipeline = redis.pipeline();
+  for (const record of records) {
+    const message = JSON.stringify({
+      orgId,
+      imei,
+      latitude: record.latitude,
+      longitude: record.longitude,
+      speed: record.speed,
+      ignition: record.ignition,
+      timestamp: record.timestamp,
+      publishedAt: new Date().toISOString(),
+    });
+    pipeline.publish(`journey:device:${imei}`, message);
+  }
+  await pipeline.exec();
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@fleet-vision/db";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
+import crypto from "crypto";
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "default_super_secret_key_change_me_in_prod"
@@ -47,11 +48,20 @@ export async function POST(request: NextRequest) {
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("24h")
+      .setExpirationTime("15m")
       .sign(JWT_SECRET);
 
-    return NextResponse.json({
-      token,
+    const refreshToken = crypto.randomBytes(32).toString("hex");
+    
+    await prisma.refreshToken.create({
+      data: {
+        token: refreshToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      },
+    });
+
+    const response = NextResponse.json({
       user: {
         id: user.id,
         email: user.email,
@@ -59,6 +69,24 @@ export async function POST(request: NextRequest) {
         role: user.role,
       },
     });
+
+    response.cookies.set("accessToken", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 15 * 60, // 15 minutes
+    });
+
+    response.cookies.set("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
+    return response;
   } catch (error) {
     console.error("[API] POST /api/v1/auth/login error:", error);
     return NextResponse.json(

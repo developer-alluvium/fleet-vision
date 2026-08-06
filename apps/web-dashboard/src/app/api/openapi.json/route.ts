@@ -49,6 +49,100 @@ export async function GET() {
           },
         },
       },
+      "/api/v1/vehicles": {
+        post: {
+          summary: "Add Vehicle",
+          description: "Registers a new vehicle.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["plateNumber", "orgId"],
+                  properties: {
+                    plateNumber: { type: "string", example: "ABC-1234" },
+                    make: { type: "string", example: "Toyota" },
+                    model: { type: "string", example: "Camry" },
+                    year: { type: "integer", example: 2022 },
+                    color: { type: "string", example: "White" },
+                    vin: { type: "string", example: "12345678901234567" },
+                    vehicleType: { type: "string", example: "CAR" },
+                    status: { type: "string", example: "ACTIVE" },
+                    fuelType: { type: "string", example: "PETROL" },
+                    maxFuelCapacity: { type: "number", example: 50.5 },
+                    orgId: { type: "string", example: "org_id" },
+                  },
+                },
+              },
+            },
+          },
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+          responses: {
+            "201": { description: "Vehicle Created" },
+            "400": { description: "Invalid Input" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden" },
+            "404": { description: "Organization Not Found" },
+            "409": { description: "Plate number or VIN already exists" },
+          },
+        },
+        get: {
+          summary: "List Vehicles",
+          description: "Lists vehicles for a specific organization.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+          parameters: [
+            {
+              name: "orgId",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+              description: "Organization ID",
+            },
+          ],
+          responses: {
+            "200": { description: "Success" },
+            "400": { description: "Missing orgId parameter" },
+          },
+        },
+      },
+      "/api/v1/devices/{deviceId}/assign": {
+        post: {
+          summary: "Assign Vehicle to Device",
+          description: "Assigns a vehicle to a GPS tracking device.",
+          parameters: [
+            {
+              name: "deviceId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Device ID (CUID)",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    vehicleId: { type: "string", example: "vehicle_id", nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+          responses: {
+            "200": { description: "Device Updated" },
+            "400": { description: "Vehicle belongs to a different organization" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden" },
+            "404": { description: "Device or Vehicle Not Found" },
+            "409": { description: "Vehicle already assigned to another device" },
+          },
+        },
+      },
       "/api/v1/devices": {
         post: {
           summary: "Register Device",
@@ -118,20 +212,11 @@ export async function GET() {
       "/api/v1/stream/fleet": {
         get: {
           summary: "Stream Live Fleet Locations (SSE)",
-          description: "Server-Sent Events stream for all vehicle locations in an organization. Requires authorization header or query parameter.",
+          description: "Server-Sent Events stream for all vehicle locations in an organization. Requires authorization header or query parameter. Upon connection, immediately emits an `init` event containing all devices, their assigned vehicles, and latest known locations. Subsequent real-time location updates are emitted as `location:update` events.",
           security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
-          parameters: [
-            {
-              name: "orgId",
-              in: "query",
-              required: true,
-              schema: { type: "string" },
-              description: "Organization ID",
-            },
-          ],
+          parameters: [],
           responses: {
             "200": { description: "SSE Stream Connection Established" },
-            "400": { description: "Missing orgId parameter" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden" },
           },
@@ -175,8 +260,8 @@ export async function GET() {
       },
       "/api/v1/stream/journey": {
         get: {
-          summary: "Stream Live Journey Updates (SSE)",
-          description: "Server-Sent Events stream for a single vehicle's movement. Accepts optional 'since' parameter to fetch and stream historical points before continuing with real-time updates.",
+          summary: "Stream Live Journey – Per-Record Real-Time Tracking (SSE)",
+          description: "Server-Sent Events stream for a single vehicle's journey. Streams EVERY individual telemetry record in real-time as the vehicle moves. Accepts optional 'since' parameter to first emit historical points (event: journey:history), then continuously streams live points (event: journey:point). Uses subscribe-first buffering to guarantee zero data gaps between history and live stream.",
           security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
           parameters: [
             {
@@ -253,7 +338,7 @@ export async function GET() {
       "/api/v1/auth/login": {
         post: {
           summary: "Organization User Login",
-          description: "Authenticates a user and returns a JWT token.",
+          description: "Authenticates a user and sets secure HttpOnly cookies for access and refresh tokens.",
           requestBody: {
             required: true,
             content: {
@@ -272,6 +357,35 @@ export async function GET() {
           responses: {
             "200": { description: "Successful Login" },
             "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/api/v1/auth/me": {
+        get: {
+          summary: "Get Current User",
+          description: "Returns the authenticated user's details. If the access token is expired, it automatically uses the refresh token to issue new cookies.",
+          responses: {
+            "200": { description: "Success" },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/api/v1/auth/refresh": {
+        post: {
+          summary: "Refresh Token",
+          description: "Issues a new access token and refresh token via HttpOnly cookies.",
+          responses: {
+            "200": { description: "Successful Refresh" },
+            "401": { description: "Unauthorized or Invalid Refresh Token" },
+          },
+        },
+      },
+      "/api/v1/auth/logout": {
+        post: {
+          summary: "User Logout",
+          description: "Revokes the refresh token and clears HttpOnly cookies.",
+          responses: {
+            "200": { description: "Successful Logout" },
           },
         },
       },

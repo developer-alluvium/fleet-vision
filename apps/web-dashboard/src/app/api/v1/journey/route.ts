@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
       take: 10000,
       select: {
         time: true,
+        serverCreatedAt: true,
         latitude: true,
         longitude: true,
         speed: true,
@@ -66,6 +67,7 @@ export async function GET(request: NextRequest) {
         speed: r.speed,
         ignition: r.ignition,
         time: r.time,
+        serverCreatedAt: r.serverCreatedAt,
       })),
     });
   } catch (error: any) {

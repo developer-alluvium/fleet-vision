@@ -19,15 +19,18 @@ export async function authenticate(request: NextRequest) {
     throw new Error("Invalid or inactive API key");
   }
 
-  // 2. Check for JWT Token in headers or query params
-  let token = "";
-  const authHeader = request.headers.get("authorization");
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.substring(7);
-  } else {
-    const queryToken = request.nextUrl.searchParams.get("token");
-    if (queryToken && queryToken.startsWith("Bearer ")) {
-      token = queryToken.substring(7);
+  // 2. Check for JWT Token in cookies, headers, or query params
+  let token = request.cookies.get("accessToken")?.value || "";
+  
+  if (!token) {
+    const authHeader = request.headers.get("authorization");
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7);
+    } else {
+      const queryToken = request.nextUrl.searchParams.get("token");
+      if (queryToken && queryToken.startsWith("Bearer ")) {
+        token = queryToken.substring(7);
+      }
     }
   }
 

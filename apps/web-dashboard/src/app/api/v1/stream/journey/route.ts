@@ -57,11 +57,38 @@ export async function GET(request: NextRequest) {
     const subscriber = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 
     // 5. Create SSE Stream
+    // Strategy: Subscribe FIRST, buffer messages, query history, then flush.
+    // This eliminates the race condition where records arriving between
+    // the DB query and subscription start would be silently lost.
     const stream = new ReadableStream({
       async start(controller) {
         controller.enqueue(": heartbeat\n\n");
 
-        // If 'since' date parameter was provided, fetch and stream historical points first
+        // ── Step 1: Subscribe to journey channel FIRST ──
+        // Buffer messages that arrive while we query historical data
+        const messageBuffer: string[] = [];
+        let isBuffering = true;
+
+        const channel = `journey:device:${imei}`;
+        subscriber.subscribe(channel, (err) => {
+          if (err) {
+            console.error("[SSE Journey] Failed to subscribe:", err);
+            controller.error(err);
+          }
+        });
+
+        subscriber.on("message", (ch, message) => {
+          if (ch === channel) {
+            if (isBuffering) {
+              // Buffer messages while historical query is in progress
+              messageBuffer.push(message);
+            } else {
+              controller.enqueue(`event: journey:point\ndata: ${message}\n\n`);
+            }
+          }
+        });
+
+        // ── Step 2: Query historical data from DB ──
         if (sinceDate) {
           try {
             const records = await prisma.telemetryRecord.findMany({
@@ -76,6 +103,7 @@ export async function GET(request: NextRequest) {
               take: 10000,
               select: {
                 time: true,
+                serverCreatedAt: true,
                 latitude: true,
                 longitude: true,
                 speed: true,
@@ -89,27 +117,24 @@ export async function GET(request: NextRequest) {
               speed: r.speed,
               ignition: r.ignition,
               time: r.time,
+              serverCreatedAt: r.serverCreatedAt,
             }));
 
+            // ── Step 3: Emit history ──
             controller.enqueue(`event: journey:history\ndata: ${JSON.stringify(history)}\n\n`);
           } catch (historyErr) {
             console.error("[SSE Journey] Error fetching historical points:", historyErr);
           }
         }
 
-        const channel = `location:device:${imei}`;
-        subscriber.subscribe(channel, (err) => {
-          if (err) {
-            console.error("[SSE Journey] Failed to subscribe:", err);
-            controller.error(err);
-          }
-        });
+        // ── Step 4: Flush buffered messages that arrived during DB query ──
+        isBuffering = false;
+        for (const buffered of messageBuffer) {
+          controller.enqueue(`event: journey:point\ndata: ${buffered}\n\n`);
+        }
+        messageBuffer.length = 0; // Clear buffer
 
-        subscriber.on("message", (ch, message) => {
-          if (ch === channel) {
-            controller.enqueue(`event: journey:point\ndata: ${message}\n\n`);
-          }
-        });
+        // ── Step 5: Continue streaming live (handled by subscriber.on above) ──
 
         const heartbeat = setInterval(() => {
           controller.enqueue(": heartbeat\n\n");
