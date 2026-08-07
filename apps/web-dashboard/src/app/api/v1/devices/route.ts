@@ -121,9 +121,9 @@ export async function GET(request: NextRequest) {
     const auth = await authenticate(request);
 
     const { searchParams } = new URL(request.url);
-    const orgId = searchParams.get("orgId");
+    let orgId = searchParams.get("orgId");
 
-    // Check authorization matches orgId
+    // Check authorization matches orgId if provided
     if (orgId && auth.organizationId !== orgId) {
       return NextResponse.json(
         { error: "Unauthorized access to this organization" },
@@ -131,9 +131,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Use orgId from auth if not provided
+    orgId = orgId || auth.organizationId;
+
     if (!orgId) {
       return NextResponse.json(
-        { error: "orgId query parameter is required" },
+        { error: "orgId is required and could not be determined from authentication" },
         { status: 400 }
       );
     }

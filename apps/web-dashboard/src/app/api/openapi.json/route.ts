@@ -173,20 +173,20 @@ export async function GET() {
         },
         get: {
           summary: "List Devices",
-          description: "Lists devices for a specific organization.",
+          description: "Lists devices for an organization. The `orgId` parameter is **optional** — the system will automatically derive the Organization ID from the caller's authentication token/key. If `orgId` is explicitly provided, it must match the authenticated user's organization.",
           security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
           parameters: [
             {
               name: "orgId",
               in: "query",
-              required: true,
+              required: false,
               schema: { type: "string" },
-              description: "Organization ID",
+              description: "Optional Organization ID (derived automatically from Bearer Token / API Key if omitted)",
             },
           ],
           responses: {
             "200": { description: "Success" },
-            "400": { description: "Missing orgId parameter" },
+            "400": { description: "Missing orgId parameter when authentication is not provided" },
           },
         },
       },
@@ -297,41 +297,83 @@ export async function GET() {
       },
       "/api/v1/history": {
         get: {
-          summary: "Get Telemetry History",
-          description: "Retrieves historical telemetry records from TimescaleDB for a given IMEI.",
+          summary: "Get Telemetry History & Historical Journey Trail",
+          description: "Retrieves historical telemetry records and journey logs from TimescaleDB for a specified device IMEI.\n\n### Authentication & Multi-Tenancy\nThis endpoint requires authentication via Bearer JWT token or Organization API key (`x-api-key` header).\nThe `orgId` parameter is **optional** — the system will automatically derive the Organization ID from the caller's authentication token/key. If `orgId` is explicitly provided, it must match the authenticated user's organization to prevent cross-tenant data access.\n\n### Time Range Filtering\n- `start` & `end`: ISO 8601 timestamps (e.g. `2026-08-07T00:00:00Z`).\n- If neither `start` nor `end` is provided, defaults to telemetry logs from the **last 24 hours**.\n- Output records are sorted in descending order by timestamp (up to a max of 10,000 records).",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
           parameters: [
             {
               name: "imei",
               in: "query",
               required: true,
               schema: { type: "string" },
-              description: "15-digit Device IMEI",
+              description: "15-digit Device IMEI number",
             },
             {
               name: "orgId",
               in: "query",
-              required: true,
+              required: false,
               schema: { type: "string" },
-              description: "Organization ID",
+              description: "Optional Organization ID (derived automatically from Bearer Token / API Key if omitted)",
             },
             {
               name: "start",
               in: "query",
               required: false,
               schema: { type: "string", format: "date-time" },
-              description: "Start timestamp (ISO 8601)",
+              description: "Start timestamp filter (ISO 8601)",
             },
             {
               name: "end",
               in: "query",
               required: false,
               schema: { type: "string", format: "date-time" },
-              description: "End timestamp (ISO 8601)",
+              description: "End timestamp filter (ISO 8601)",
             },
           ],
           responses: {
-            "200": { description: "Success" },
-            "400": { description: "Invalid/missing parameters" },
+            "200": {
+              description: "Telemetry history retrieved successfully",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      imei: { type: "string", example: "353456789012345" },
+                      orgId: { type: "string", example: "cm0123456789" },
+                      summary: {
+                        type: "object",
+                        properties: {
+                          totalDistanceKm: { type: "number", example: 120.5 },
+                          drivingDurationMinutes: { type: "integer", example: 150 },
+                          idleDurationMinutes: { type: "integer", example: 30 },
+                          maxSpeedKmh: { type: "integer", example: 85 },
+                          avgSpeedKmh: { type: "number", example: 48.2 },
+                          startTime: { type: "string", format: "date-time" },
+                          endTime: { type: "string", format: "date-time" },
+                        }
+                      },
+                      route: {
+                        type: "array",
+                        items: { type: "object" },
+                      },
+                      metadata: {
+                        type: "object",
+                        properties: {
+                          totalTelemetryPoints: { type: "integer", example: 50000 },
+                          returnedRoutePoints: { type: "integer", example: 1200 },
+                          simplified: { type: "boolean", example: true },
+                          queryTimeMs: { type: "integer", example: 450 },
+                        }
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Missing or invalid query parameters (e.g. invalid date format or missing imei)" },
+            "401": { description: "Unauthorized - Invalid or missing authentication token / API key" },
+            "403": { description: "Forbidden - Access denied for specified orgId" },
+            "500": { description: "Internal server error" },
           },
         },
       },

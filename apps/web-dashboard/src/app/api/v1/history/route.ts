@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@fleet-vision/db";
+import { authenticate } from "@/lib/auth";
+import { calculateJourneySummary } from "@/lib/journeySummary";
+import { adaptiveSimplifyRoute } from "@/lib/douglasPeucker";
 
 /**
  * GET /api/v1/history?imei=xxx&start=...&end=...&orgId=...
  *
- * Returns historical telemetry data from TimescaleDB.
- * Security: Strictly enforces WHERE organizationId = orgId to prevent
- * cross-tenant data leakage.
+ * Returns historical telemetry data from TimescaleDB with adaptive
+ * route simplification and journey summary calculation.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -14,7 +16,20 @@ export async function GET(request: NextRequest) {
     const imei = searchParams.get("imei");
     const start = searchParams.get("start");
     const end = searchParams.get("end");
-    const orgId = searchParams.get("orgId");
+    let orgId = searchParams.get("orgId");
+
+    const auth = await authenticate(request);
+    
+    // Check authorization matches orgId if provided
+    if (orgId && auth.organizationId !== orgId) {
+      return NextResponse.json(
+        { error: "Unauthorized access to this organization" },
+        { status: 403 }
+      );
+    }
+
+    // Use orgId from auth if not provided
+    orgId = orgId || auth.organizationId;
 
     // ── Validation ─────────────────────────────────────────
     if (!imei) {
@@ -26,63 +41,102 @@ export async function GET(request: NextRequest) {
 
     if (!orgId) {
       return NextResponse.json(
-        { error: "orgId query parameter is required" },
+        { error: "orgId is required and could not be determined from authentication" },
         { status: 400 }
       );
     }
 
     // Build date range filter
-    const timeFilter: { gte?: Date; lte?: Date } = {};
+    let startDate: Date;
+    let endDate: Date;
+
     if (start) {
-      const startDate = new Date(start);
+      startDate = new Date(start);
       if (isNaN(startDate.getTime())) {
-        return NextResponse.json(
-          { error: "start must be a valid ISO 8601 date" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "start must be a valid ISO 8601 date" }, { status: 400 });
       }
-      timeFilter.gte = startDate;
-    }
-    if (end) {
-      const endDate = new Date(end);
-      if (isNaN(endDate.getTime())) {
-        return NextResponse.json(
-          { error: "end must be a valid ISO 8601 date" },
-          { status: 400 }
-        );
-      }
-      timeFilter.lte = endDate;
+    } else {
+      startDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // Default to last 24 hours
     }
 
-    // Default: last 24 hours if no range specified
-    if (!start && !end) {
-      timeFilter.gte = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    if (end) {
+      endDate = new Date(end);
+      if (isNaN(endDate.getTime())) {
+        return NextResponse.json({ error: "end must be a valid ISO 8601 date" }, { status: 400 });
+      }
+    } else {
+      endDate = new Date(); // Default to now
     }
+
+    const queryStartTime = Date.now();
 
     // ── Query TimescaleDB ──────────────────────────────────
     // SECURITY: Always enforce organizationId to prevent cross-tenant access
-    const records = await prisma.telemetryRecord.findMany({
-      where: {
+    // Fetch raw rows directly using $queryRaw to avoid Prisma ORM overhead
+    // We order by time ASC because journey calculation and drawing a path needs chronological order
+    const records: any[] = await prisma.$queryRaw`
+      SELECT 
+        time, 
+        latitude as lat, 
+        longitude as lng, 
+        speed, 
+        ignition 
+      FROM telemetry_records
+      WHERE imei = ${imei} 
+        AND organization_id = ${orgId}
+        AND time >= ${startDate}
+        AND time <= ${endDate}
+        AND latitude IS NOT NULL
+        AND longitude IS NOT NULL
+      ORDER BY time ASC
+    `;
+
+    const totalTelemetryPoints = records.length;
+
+    if (totalTelemetryPoints === 0) {
+      return NextResponse.json({
         imei,
-        organizationId: orgId,
-        time: timeFilter,
-      },
-      orderBy: { time: "desc" },
-      take: 10000, // Safety limit
-    });
+        orgId,
+        summary: null,
+        route: [],
+        metadata: {
+          totalTelemetryPoints: 0,
+          returnedRoutePoints: 0,
+          simplified: false,
+          queryTimeMs: Date.now() - queryStartTime
+        }
+      });
+    }
+
+    // ── Calculate Summary ──────────────────────────────────
+    const summary = calculateJourneySummary(records);
+
+    // ── Simplify Route ─────────────────────────────────────
+    const { route, simplified } = adaptiveSimplifyRoute(records);
 
     return NextResponse.json({
       imei,
       orgId,
-      count: records.length,
-      timeRange: {
-        start: timeFilter.gte?.toISOString() ?? null,
-        end: timeFilter.lte?.toISOString() ?? null,
-      },
-      records,
+      summary,
+      route,
+      metadata: {
+        totalTelemetryPoints,
+        returnedRoutePoints: route.length,
+        simplified,
+        queryTimeMs: Date.now() - queryStartTime
+      }
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error("[API] GET /api/v1/history error:", error);
+    if (
+      error.message &&
+      (error.message.includes("Authentication required") ||
+        error.message.includes("Invalid token") ||
+        error.message.includes("API key"))
+    ) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

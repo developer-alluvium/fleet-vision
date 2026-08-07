@@ -13,9 +13,8 @@ function getCorsHeaders(origin: string | null) {
     "Access-Control-Allow-Credentials": "true",
   };
 
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-  }
+  // Allow any origin for local development
+  headers["Access-Control-Allow-Origin"] = origin || "*";
 
   return headers;
 }
