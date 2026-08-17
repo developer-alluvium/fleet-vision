@@ -44,6 +44,9 @@ export function getProcessorStats() {
 export async function processTelemetryBatch(
   messages: Array<{ value: Buffer | null }>
 ): Promise<void> {
+  const LIVE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+  const now = Date.now();
+
   // Collect all valid records with their orgIds
   const validRecords: Array<{
     time: Date;
@@ -150,24 +153,32 @@ export async function processTelemetryBatch(
     }
 
     // ── 3. Prepare live map update (latest record per device) ──
-    const latestRecord = records[records.length - 1];
-    liveMapUpdates.set(imei, {
-      orgId,
-      imei,
-      payload: {
+    // Sort just in case device sent them out of order in the same packet
+    const sortedRecords = [...records].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const latestRecord = sortedRecords[sortedRecords.length - 1];
+    
+    // Only update the live map (and fleet SSE stream) if this is actually a RECENT record.
+    // If the device is uploading old buffered data, we don't want to overwrite its
+    // current live location on the map with a position from 2 hours ago!
+    if (now - new Date(latestRecord.timestamp).getTime() < LIVE_THRESHOLD_MS) {
+      liveMapUpdates.set(imei, {
+        orgId,
         imei,
-        latitude: latestRecord.latitude,
-        longitude: latestRecord.longitude,
-        speed: latestRecord.speed,
-        angle: latestRecord.angle,
-        ignition:
-          latestRecord.io_elements["239"] === 1 ||
-          latestRecord.io_elements["ignition"] === 1 ||
-          false,
-        timestamp: latestRecord.timestamp,
-        updatedAt: new Date().toISOString(),
-      },
-    });
+        payload: {
+          imei,
+          latitude: latestRecord.latitude,
+          longitude: latestRecord.longitude,
+          speed: latestRecord.speed,
+          angle: latestRecord.angle,
+          ignition:
+            latestRecord.io_elements["239"] === 1 ||
+            latestRecord.io_elements["ignition"] === 1 ||
+            false,
+          timestamp: latestRecord.timestamp,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    }
   }
 
   if (validRecords.length === 0) {
@@ -194,13 +205,29 @@ export async function processTelemetryBatch(
   );
   await Promise.all(liveMapPromises);
 
-  // ── 6. Publish ALL individual records to journey Pub/Sub channels ──
-  // This enables the journey SSE stream to receive every GPS point in real-time
+  // ── 6. Publish only RECENT records to journey Pub/Sub channels ──
+  // Old buffered records (from device offline periods) are already saved in
+  // TimescaleDB above and will be served via the journey:history SSE event.
+  // Only truly recent records (within last 2 minutes) should go to the live
+  // SSE stream to avoid confusing the frontend with out-of-order old data.
   const journeyPromises = Array.from(journeyRecords.entries()).map(
     ([deviceImei, { orgId, records }]) => {
-      // Sort records chronologically before publishing
-      records.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      return publishJourneyRecords(orgId, deviceImei, records);
+      // Filter: only publish records whose timestamp is within the live threshold
+      const liveRecords = records.filter(
+        (r) => now - new Date(r.timestamp).getTime() < LIVE_THRESHOLD_MS
+      );
+
+      if (liveRecords.length === 0) return Promise.resolve();
+
+      if (liveRecords.length < records.length) {
+        console.log(
+          `[PROCESSOR] IMEI ${deviceImei}: publishing ${liveRecords.length}/${records.length} recent records to SSE (${records.length - liveRecords.length} buffered records saved to DB only)`
+        );
+      }
+
+      // Sort chronologically before publishing
+      liveRecords.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      return publishJourneyRecords(orgId, deviceImei, liveRecords);
     }
   );
   await Promise.all(journeyPromises);

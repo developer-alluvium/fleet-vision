@@ -11,20 +11,23 @@ export async function GET(request: NextRequest) {
     const auth = await authenticate(request);
 
     // 2. Validate params
-    const orgId = request.nextUrl.searchParams.get("orgId");
+    let orgId = request.nextUrl.searchParams.get("orgId");
     const imei = request.nextUrl.searchParams.get("imei");
     const since = request.nextUrl.searchParams.get("since");
 
-    if (!orgId || !imei) {
-      return new Response(JSON.stringify({ error: "orgId and imei query parameters are required" }), {
-        status: 400,
+    if (orgId && auth.organizationId !== orgId) {
+      return new Response(JSON.stringify({ error: "Forbidden: You can only access your own organization's stream" }), {
+        status: 403,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    if (auth.organizationId !== orgId) {
-      return new Response(JSON.stringify({ error: "Forbidden: You can only access your own organization's stream" }), {
-        status: 403,
+    // Use orgId from auth if not provided
+    orgId = orgId || auth.organizationId;
+
+    if (!orgId || !imei) {
+      return new Response(JSON.stringify({ error: "imei query parameter is required (and orgId if no auth context)" }), {
+        status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -60,6 +63,7 @@ export async function GET(request: NextRequest) {
     // Strategy: Subscribe FIRST, buffer messages, query history, then flush.
     // This eliminates the race condition where records arriving between
     // the DB query and subscription start would be silently lost.
+    let heartbeat: NodeJS.Timeout;
     const stream = new ReadableStream({
       async start(controller) {
         controller.enqueue(": heartbeat\n\n");
@@ -68,6 +72,22 @@ export async function GET(request: NextRequest) {
         // Buffer messages that arrive while we query historical data
         const messageBuffer: string[] = [];
         let isBuffering = true;
+
+        const formatRedisMessage = (rawMessage: string) => {
+          try {
+            const data = JSON.parse(rawMessage);
+            return JSON.stringify({
+              lat: data.latitude,
+              lng: data.longitude,
+              speed: data.speed,
+              ignition: data.ignition,
+              time: data.timestamp,
+              serverCreatedAt: data.publishedAt,
+            });
+          } catch (e) {
+            return rawMessage;
+          }
+        };
 
         const channel = `journey:device:${imei}`;
         subscriber.subscribe(channel, (err) => {
@@ -79,11 +99,16 @@ export async function GET(request: NextRequest) {
 
         subscriber.on("message", (ch, message) => {
           if (ch === channel) {
+            const formattedMessage = formatRedisMessage(message);
             if (isBuffering) {
               // Buffer messages while historical query is in progress
-              messageBuffer.push(message);
+              messageBuffer.push(formattedMessage);
             } else {
-              controller.enqueue(`event: journey:point\ndata: ${message}\n\n`);
+              try {
+                controller.enqueue(`event: journey:point\ndata: ${formattedMessage}\n\n`);
+              } catch (err) {
+                // Client disconnected, ignore
+              }
             }
           }
         });
@@ -121,7 +146,11 @@ export async function GET(request: NextRequest) {
             }));
 
             // ── Step 3: Emit history ──
-            controller.enqueue(`event: journey:history\ndata: ${JSON.stringify(history)}\n\n`);
+            try {
+              controller.enqueue(`event: journey:history\ndata: ${JSON.stringify(history)}\n\n`);
+            } catch (err) {
+              // Client disconnected, ignore
+            }
           } catch (historyErr) {
             console.error("[SSE Journey] Error fetching historical points:", historyErr);
           }
@@ -130,24 +159,39 @@ export async function GET(request: NextRequest) {
         // ── Step 4: Flush buffered messages that arrived during DB query ──
         isBuffering = false;
         for (const buffered of messageBuffer) {
-          controller.enqueue(`event: journey:point\ndata: ${buffered}\n\n`);
+          try {
+            controller.enqueue(`event: journey:point\ndata: ${buffered}\n\n`);
+          } catch (err) {
+            // Client disconnected, ignore
+          }
         }
         messageBuffer.length = 0; // Clear buffer
 
         // ── Step 5: Continue streaming live (handled by subscriber.on above) ──
 
-        const heartbeat = setInterval(() => {
-          controller.enqueue(": heartbeat\n\n");
+        heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(": heartbeat\n\n");
+          } catch (err) {
+            clearInterval(heartbeat);
+          }
         }, 30000);
 
-        request.signal.addEventListener("abort", () => {
+        const cleanup = () => {
           clearInterval(heartbeat);
-          subscriber.unsubscribe(channel);
-          subscriber.quit();
-        });
+          subscriber.unsubscribe(channel).catch(() => {});
+          subscriber.quit().catch(() => {});
+        };
+
+        if (request.signal.aborted) {
+          cleanup();
+        } else {
+          request.signal.addEventListener("abort", cleanup);
+        }
       },
       cancel() {
-        subscriber.quit();
+        clearInterval(heartbeat);
+        subscriber.quit().catch(() => {});
       }
     });
 

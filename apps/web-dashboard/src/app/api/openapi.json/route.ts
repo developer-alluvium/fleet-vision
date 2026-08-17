@@ -238,9 +238,9 @@ export async function GET() {
             {
               name: "orgId",
               in: "query",
-              required: true,
+              required: false,
               schema: { type: "string" },
-              description: "Organization ID",
+              description: "Optional Organization ID (derived automatically from Bearer Token / API Key if omitted)",
             },
             {
               name: "since",
@@ -274,9 +274,9 @@ export async function GET() {
             {
               name: "orgId",
               in: "query",
-              required: true,
+              required: false,
               schema: { type: "string" },
-              description: "Organization ID",
+              description: "Optional Organization ID (derived automatically from Bearer Token / API Key if omitted)",
             },
             {
               name: "since",

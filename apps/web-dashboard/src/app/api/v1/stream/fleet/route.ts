@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     const subscriber = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 
     // 6. Create a readable stream for SSE
+    let heartbeat: NodeJS.Timeout;
     const stream = new ReadableStream({
       start(controller) {
         // Send initial heartbeat to establish connection
@@ -59,24 +60,39 @@ export async function GET(request: NextRequest) {
 
         subscriber.on("message", (ch, message) => {
           if (ch === channel) {
-            controller.enqueue(`event: location:update\ndata: ${message}\n\n`);
+            try {
+              controller.enqueue(`event: location:update\ndata: ${message}\n\n`);
+            } catch (err) {
+              // Client disconnected, ignore
+            }
           }
         });
 
         // Heartbeat every 30s to keep connection alive through proxies/load balancers
-        const heartbeat = setInterval(() => {
-          controller.enqueue(": heartbeat\n\n");
+        heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(": heartbeat\n\n");
+          } catch (err) {
+            clearInterval(heartbeat);
+          }
         }, 30000);
 
         // Cleanup when client disconnects
-        request.signal.addEventListener("abort", () => {
+        const cleanup = () => {
           clearInterval(heartbeat);
-          subscriber.unsubscribe(channel);
-          subscriber.quit();
-        });
+          subscriber.unsubscribe(channel).catch(() => {});
+          subscriber.quit().catch(() => {});
+        };
+
+        if (request.signal.aborted) {
+          cleanup();
+        } else {
+          request.signal.addEventListener("abort", cleanup);
+        }
       },
       cancel() {
-        subscriber.quit();
+        clearInterval(heartbeat);
+        subscriber.quit().catch(() => {});
       }
     });
 

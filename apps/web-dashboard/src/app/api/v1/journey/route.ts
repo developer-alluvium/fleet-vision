@@ -8,20 +8,22 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const imei = searchParams.get("imei");
-    const orgId = searchParams.get("orgId");
+    let orgId = searchParams.get("orgId");
     let since = searchParams.get("since");
 
-    if (!imei || !orgId) {
-      return NextResponse.json(
-        { error: "imei and orgId query parameters are required" },
-        { status: 400 }
-      );
-    }
-
-    if (auth.organizationId !== orgId) {
+    if (orgId && auth.organizationId !== orgId) {
       return NextResponse.json(
         { error: "Forbidden: You can only access your own organization's data" },
         { status: 403 }
+      );
+    }
+
+    orgId = orgId || auth.organizationId;
+
+    if (!imei || !orgId) {
+      return NextResponse.json(
+        { error: "imei query parameter is required (and orgId if no auth context)" },
+        { status: 400 }
       );
     }
 
