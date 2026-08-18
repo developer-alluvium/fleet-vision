@@ -62,7 +62,7 @@ export async function archiveColdStorage(): Promise<void> {
     let totalExported = 0;
 
     const csvHeader =
-      "id,time,imei,organization_id,latitude,longitude,speed,ignition,io_elements\n";
+      "id,time,imei,organization_id,latitude,longitude,speed,ignition,fuel_level_raw\n";
 
     const gzip = createGzip();
     const output = createWriteStream(filepath);
@@ -90,7 +90,7 @@ export async function archiveColdStorage(): Promise<void> {
             (r) =>
               `${r.id},${r.time.toISOString()},${r.imei},${r.organizationId},` +
               `${r.latitude ?? ""},${r.longitude ?? ""},${r.speed ?? ""},` +
-              `${r.ignition},${JSON.stringify(r.ioElements ?? {}).replace(/,/g, ";")}`
+              `${r.ignition},${r.fuelLevelRaw ?? ""}`
           )
           .join("\n");
 

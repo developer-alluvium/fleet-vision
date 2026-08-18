@@ -15,7 +15,7 @@ import { authenticate } from "@/lib/auth";
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ deviceId: string }> | { deviceId: string } }
+  { params }: { params: Promise<{ deviceId: string }> }
 ) {
   try {
     const auth = await authenticate(request);

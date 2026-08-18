@@ -13,6 +13,9 @@ export {
   getLiveMap,
   publishLocationUpdate,
   publishJourneyRecords,
+  cacheVehicleFuelSettings,
+  getCachedFuelSettings,
+  invalidateFuelSettingsCache,
 } from "./redis";
 
 // Global singleton to prevent multiple PrismaClient instances in development

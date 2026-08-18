@@ -147,3 +147,34 @@ export async function publishJourneyRecords(
   }
   await pipeline.exec();
 }
+
+// ─── Fuel Settings Cache Helpers ──────────────────────────
+
+export async function cacheVehicleFuelSettings(
+  imei: string,
+  settings: { bleFuelChannel: number | null }
+): Promise<void> {
+  const pipeline = redis.pipeline();
+  pipeline.hset(`fuel_settings:${imei}`, {
+    bleFuelChannel: settings.bleFuelChannel ?? "",
+  });
+  pipeline.expire(`fuel_settings:${imei}`, 3600); // 1-hour TTL
+  await pipeline.exec();
+}
+
+export async function getCachedFuelSettings(
+  imei: string
+): Promise<{ bleFuelChannel: number | null } | null> {
+  const data = await redis.hgetall(`fuel_settings:${imei}`);
+  if (!data || Object.keys(data).length === 0) {
+    return null;
+  }
+  
+  return {
+    bleFuelChannel: data.bleFuelChannel ? parseInt(data.bleFuelChannel, 10) : null,
+  };
+}
+
+export async function invalidateFuelSettingsCache(imei: string): Promise<void> {
+  await redis.del(`fuel_settings:${imei}`);
+}

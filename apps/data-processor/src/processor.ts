@@ -1,4 +1,4 @@
-import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma } from "@fleet-vision/db";
+import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings } from "@fleet-vision/db";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -56,7 +56,14 @@ export async function processTelemetryBatch(
     longitude: number | null;
     speed: number | null;
     ignition: boolean;
-    ioElements: Prisma.InputJsonValue | undefined;
+    gsmSignal: number | null;
+    externalVoltage: number | null;
+    internalBatteryVoltage: number | null;
+    gnssStatus: number | null;
+    batteryLevel: number | null;
+    fuelLevelRaw: number | null;
+    movement: boolean | null;
+    angle: number | null;
   }> = [];
 
   // Track live map updates to batch at the end
@@ -74,6 +81,7 @@ export async function processTelemetryBatch(
         latitude: number | null;
         longitude: number | null;
         speed: number | null;
+        angle: number | null;
         ignition: boolean;
         timestamp: string;
       }>;
@@ -114,6 +122,7 @@ export async function processTelemetryBatch(
     }
 
     const { orgId } = auth;
+    const fuelSettings = await getCachedFuelSettings(imei);
 
     // ── 2. Build telemetry records with orgId injected ─────
     // Also collect per-device journey records for SSE publishing
@@ -122,12 +131,31 @@ export async function processTelemetryBatch(
     }
     const deviceJourney = journeyRecords.get(imei)!;
 
+    console.log(
+      `[PROCESSOR] 📡 Processing ${records.length} record(s) for IMEI: ${imei} | BLE Channel: ${fuelSettings?.bleFuelChannel ?? "None"}`
+    );
+
     for (const record of records) {
       // Detect ignition from io_elements (AVL ID 239 is standard for ignition)
       const ignition =
         record.io_elements["239"] === 1 ||
         record.io_elements["ignition"] === 1 ||
         false;
+
+      let fuelLevelRaw: number | null = null;
+
+      if (fuelSettings?.bleFuelChannel) {
+        const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
+        const ioId = ioMapping[fuelSettings.bleFuelChannel as keyof typeof ioMapping];
+        if (ioId) {
+          fuelLevelRaw = record.io_elements[String(ioId)] ?? null;
+        }
+      }
+
+      console.log(
+        `[PROCESSOR] ⛽ IMEI: ${imei} | Lat: ${record.latitude}, Lng: ${record.longitude} | Speed: ${record.speed} | Fuel Level Raw: ${fuelLevelRaw ?? "N/A"} | IO Elements:`,
+        record.io_elements
+      );
 
       validRecords.push({
         time: new Date(record.timestamp),
@@ -138,7 +166,13 @@ export async function processTelemetryBatch(
         speed: record.speed ?? null,
         angle: record.angle ?? null,
         ignition,
-        ioElements: (record.io_elements as Prisma.InputJsonValue) ?? undefined,
+        gsmSignal: record.io_elements["21"] ?? null,
+        externalVoltage: record.io_elements["66"] ?? null,
+        internalBatteryVoltage: record.io_elements["67"] ?? null,
+        gnssStatus: record.io_elements["69"] ?? null,
+        batteryLevel: record.io_elements["113"] ?? null,
+        fuelLevelRaw,
+        movement: record.io_elements["240"] !== undefined ? record.io_elements["240"] === 1 : null,
       });
 
       // Collect for journey stream (every individual record)
@@ -157,6 +191,16 @@ export async function processTelemetryBatch(
     const sortedRecords = [...records].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const latestRecord = sortedRecords[sortedRecords.length - 1];
     
+    let latestFuelLevelRaw: number | null = null;
+
+    if (fuelSettings?.bleFuelChannel) {
+      const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
+      const ioId = ioMapping[fuelSettings.bleFuelChannel as keyof typeof ioMapping];
+      if (ioId) {
+        latestFuelLevelRaw = latestRecord.io_elements[String(ioId)] ?? null;
+      }
+    }
+
     // Only update the live map (and fleet SSE stream) if this is actually a RECENT record.
     // If the device is uploading old buffered data, we don't want to overwrite its
     // current live location on the map with a position from 2 hours ago!
@@ -174,6 +218,7 @@ export async function processTelemetryBatch(
             latestRecord.io_elements["239"] === 1 ||
             latestRecord.io_elements["ignition"] === 1 ||
             false,
+          fuelLevelRaw: latestFuelLevelRaw,
           timestamp: latestRecord.timestamp,
           updatedAt: new Date().toISOString(),
         },

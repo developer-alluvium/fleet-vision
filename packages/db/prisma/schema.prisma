@@ -88,6 +88,9 @@ model Vehicle {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   device          Device?
 
+  // ── BLE Fuel Sensor ─────────────────────────────────────
+  bleFuelChannel               Int?     @map("ble_fuel_channel")             // 1–4 (which BLE sensor)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -122,9 +125,20 @@ model TelemetryRecord {
   longitude       Float?
   speed           Float?
   angle           Float?
-  ignition        Boolean  @default(false)
-  ioElements      Json?    @map("io_elements") @db.JsonB
-  serverCreatedAt DateTime @default(now()) @map("server_created_at") @db.Timestamptz
+  ignition               Boolean  @default(false)
+  
+  // Extracted IO Elements
+  gsmSignal              Int?     @map("gsm_signal")
+  externalVoltage        Int?     @map("external_voltage")
+  internalBatteryVoltage Int?     @map("internal_battery_voltage")
+  gnssStatus             Int?     @map("gnss_status")
+  batteryLevel           Int?     @map("battery_level")
+  movement               Boolean?
+
+  // ── BLE Fuel Sensor Data ──────────────────────────────
+  fuelLevelRaw           Int?     @map("fuel_level_raw")         // IO 270/273/276/279 raw value
+
+  serverCreatedAt        DateTime @default(now()) @map("server_created_at") @db.Timestamptz
 
   @@id([id, time])
   @@index([time(sort: Desc)])
