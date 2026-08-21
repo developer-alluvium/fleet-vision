@@ -126,6 +126,7 @@ export async function publishJourneyRecords(
     longitude: number | null;
     speed: number | null;
     ignition: boolean;
+    odometer?: number | null;
     timestamp: string;
   }>
 ): Promise<void> {
@@ -140,6 +141,7 @@ export async function publishJourneyRecords(
       longitude: record.longitude,
       speed: record.speed,
       ignition: record.ignition,
+      odometer: record.odometer,
       timestamp: record.timestamp,
       publishedAt: new Date().toISOString(),
     });

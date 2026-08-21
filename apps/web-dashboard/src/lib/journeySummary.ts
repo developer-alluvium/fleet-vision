@@ -8,6 +8,8 @@ export interface JourneySummary {
   avgSpeedKmh: number;
   startTime: string | null;
   endTime: string | null;
+  startOdometer: number | null;
+  endOdometer: number | null;
 }
 
 export function calculateJourneySummary(points: Point[]): JourneySummary {
@@ -20,6 +22,8 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
       avgSpeedKmh: 0,
       startTime: null,
       endTime: null,
+      startOdometer: null,
+      endOdometer: null,
     };
   }
 
@@ -83,5 +87,7 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
     avgSpeedKmh: Number(avgSpeedKmh.toFixed(1)),
     startTime: new Date(points[0].time).toISOString(),
     endTime: new Date(points[points.length - 1].time).toISOString(),
+    startOdometer: points[0].odometer ?? null,
+    endOdometer: points[points.length - 1].odometer ?? null,
   };
 }

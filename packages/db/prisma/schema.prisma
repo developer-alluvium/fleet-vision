@@ -134,6 +134,8 @@ model TelemetryRecord {
   gnssStatus             Int?     @map("gnss_status")
   batteryLevel           Int?     @map("battery_level")
   movement               Boolean?
+  odometer               Float?
+  tripOdometer           Float?   @map("trip_odometer")
 
   // ── BLE Fuel Sensor Data ──────────────────────────────
   fuelLevelRaw           Int?     @map("fuel_level_raw")         // IO 270/273/276/279 raw value

@@ -81,6 +81,7 @@ export async function GET(request: NextRequest) {
               lng: data.longitude,
               speed: data.speed,
               ignition: data.ignition,
+              odometer: data.odometer,
               time: data.timestamp,
               serverCreatedAt: data.publishedAt,
             });
@@ -133,6 +134,7 @@ export async function GET(request: NextRequest) {
                 longitude: true,
                 speed: true,
                 ignition: true,
+                odometer: true,
               },
             });
 
@@ -141,6 +143,7 @@ export async function GET(request: NextRequest) {
               lng: r.longitude,
               speed: r.speed,
               ignition: r.ignition,
+              odometer: r.odometer,
               time: r.time,
               serverCreatedAt: r.serverCreatedAt,
             }));

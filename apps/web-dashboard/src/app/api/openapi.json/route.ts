@@ -350,11 +350,24 @@ export async function GET() {
                           avgSpeedKmh: { type: "number", example: 48.2 },
                           startTime: { type: "string", format: "date-time" },
                           endTime: { type: "string", format: "date-time" },
+                          startOdometer: { type: "number", nullable: true, example: 12050.2 },
+                          endOdometer: { type: "number", nullable: true, example: 12170.7 },
                         }
                       },
                       route: {
                         type: "array",
-                        items: { type: "object" },
+                        items: {
+                          type: "object",
+                          properties: {
+                            time: { type: "string", format: "date-time" },
+                            lat: { type: "number", example: 37.7749 },
+                            lng: { type: "number", example: -122.4194 },
+                            speed: { type: "number", example: 45 },
+                            ignition: { type: "boolean", example: true },
+                            fuelLevelRaw: { type: "number", example: 50.5 },
+                            odometer: { type: "number", example: 12050.2 },
+                          }
+                        },
                       },
                       metadata: {
                         type: "object",

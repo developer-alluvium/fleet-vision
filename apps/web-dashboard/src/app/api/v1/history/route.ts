@@ -81,7 +81,8 @@ export async function GET(request: NextRequest) {
         longitude as lng, 
         speed, 
         ignition,
-        fuel_level_raw as "fuelLevelRaw"
+        fuel_level_raw as "fuelLevelRaw",
+        odometer
       FROM telemetry_records
       WHERE imei = ${imei} 
         AND organization_id = ${orgId}

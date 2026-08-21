@@ -64,6 +64,8 @@ export async function processTelemetryBatch(
     fuelLevelRaw: number | null;
     movement: boolean | null;
     angle: number | null;
+    odometer: number | null;
+    tripOdometer: number | null;
   }> = [];
 
   // Track live map updates to batch at the end
@@ -83,6 +85,7 @@ export async function processTelemetryBatch(
         speed: number | null;
         angle: number | null;
         ignition: boolean;
+        odometer: number | null;
         timestamp: string;
       }>;
     }
@@ -173,6 +176,8 @@ export async function processTelemetryBatch(
         batteryLevel: record.io_elements["113"] ?? null,
         fuelLevelRaw,
         movement: record.io_elements["240"] !== undefined ? record.io_elements["240"] === 1 : null,
+        odometer: record.io_elements["16"] ?? null,
+        tripOdometer: record.io_elements["199"] ?? null,
       });
 
       // Collect for journey stream (every individual record)
@@ -182,6 +187,7 @@ export async function processTelemetryBatch(
         speed: record.speed ?? null,
         angle: record.angle ?? null,
         ignition,
+        odometer: record.io_elements["16"] ?? null,
         timestamp: record.timestamp,
       });
     }
@@ -219,6 +225,7 @@ export async function processTelemetryBatch(
             latestRecord.io_elements["ignition"] === 1 ||
             false,
           fuelLevelRaw: latestFuelLevelRaw,
+          odometer: latestRecord.io_elements["16"] ?? null,
           timestamp: latestRecord.timestamp,
           updatedAt: new Date().toISOString(),
         },
