@@ -140,9 +140,12 @@ export async function processTelemetryBatch(
 
     for (const record of records) {
       // Detect ignition from io_elements (AVL ID 239 is standard for ignition)
+      // Fallback: if vehicle is moving, assume ignition is ON
       const ignition =
         record.io_elements["239"] === 1 ||
         record.io_elements["ignition"] === 1 ||
+        record.io_elements["1"] === 1 ||
+        (record.speed !== undefined && record.speed > 0) ||
         false;
 
       let fuelLevelRaw: number | null = null;
@@ -196,7 +199,7 @@ export async function processTelemetryBatch(
     // Sort just in case device sent them out of order in the same packet
     const sortedRecords = [...records].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const latestRecord = sortedRecords[sortedRecords.length - 1];
-    
+
     let latestFuelLevelRaw: number | null = null;
 
     if (fuelSettings?.bleFuelChannel) {
@@ -223,6 +226,8 @@ export async function processTelemetryBatch(
           ignition:
             latestRecord.io_elements["239"] === 1 ||
             latestRecord.io_elements["ignition"] === 1 ||
+            latestRecord.io_elements["1"] === 1 ||
+            (latestRecord.speed !== undefined && latestRecord.speed > 0) ||
             false,
           fuelLevelRaw: latestFuelLevelRaw,
           odometer: latestRecord.io_elements["16"] ?? null,
