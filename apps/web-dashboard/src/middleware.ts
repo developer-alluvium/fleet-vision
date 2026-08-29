@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 const ALLOWED_ORIGINS = [
   "http://localhost:8080",
+  "http://localhost:3000",
+  "http://192.168.0.160:3000",
   "http://localhost:3001",
+  "http://192.168.0.160:3001",
   "http://localhost:3002"
   // Add production frontend URL here
 ];

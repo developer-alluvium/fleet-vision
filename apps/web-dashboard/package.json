@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
+    
+    "dev": "next dev -H 0.0.0.0 --port 3000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
+    "@dsnp/parquetjs": "^1.8.8",
     "@fleet-vision/db": "*",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.7",

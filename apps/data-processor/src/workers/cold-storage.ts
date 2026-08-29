@@ -1,14 +1,11 @@
-import { createWriteStream } from "fs";
-import { createGzip } from "zlib";
-import { pipeline } from "stream/promises";
-import { Readable } from "stream";
 import path from "path";
 import { prisma } from "@fleet-vision/db";
+import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 /**
  * Cold Storage Archival — Nightly Cron
  *
- * Exports telemetry records older than 6 months to compressed CSV files,
+ * Exports telemetry records older than 6 months to compressed Parquet files,
  * then deletes the archived rows from TimescaleDB.
  *
  * Production: Upload to AWS S3 before deleting.
@@ -24,12 +21,25 @@ const BATCH_SIZE = 10000;
  * Run the archival process.
  */
 export async function archiveColdStorage(): Promise<void> {
-  console.log(
-    `[ARCHIVAL] Starting cold storage archival (retention: ${RETENTION_MONTHS} months)…`
-  );
+  const ENABLE_COLD_STORAGE = process.env.ENABLE_COLD_STORAGE === "true";
+  if (!ENABLE_COLD_STORAGE) {
+    console.log("[ARCHIVAL] Cold storage is disabled via ENABLE_COLD_STORAGE flag. Skipping archival.");
+    return;
+  }
 
   const cutoffDate = new Date();
-  cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
+  if (process.env.RETENTION_HOURS) {
+    const hours = parseInt(process.env.RETENTION_HOURS, 10);
+    cutoffDate.setHours(cutoffDate.getHours() - hours);
+    console.log(
+      `[ARCHIVAL] Starting cold storage archival (retention: ${hours} hours)…`
+    );
+  } else {
+    cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
+    console.log(
+      `[ARCHIVAL] Starting cold storage archival (retention: ${RETENTION_MONTHS} months)…`
+    );
+  }
 
   try {
     // ── 1. Count records to archive ──────────────────────────
@@ -48,59 +58,81 @@ export async function archiveColdStorage(): Promise<void> {
       `[ARCHIVAL] Found ${count} records older than ${cutoffDate.toISOString()}`
     );
 
-    // ── 2. Export to compressed CSV ──────────────────────────
+    // ── 2. Export to Parquet ─────────────────────────────────
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `telemetry_archive_${timestamp}.csv.gz`;
+    const filename = `telemetry_archive_${timestamp}.parquet`;
     const filepath = path.join(ARCHIVE_DIR, filename);
 
     // Ensure archive directory exists
     const { mkdir } = await import("fs/promises");
     await mkdir(ARCHIVE_DIR, { recursive: true });
 
-    // Stream records → CSV → gzip → file
+    const schema = new ParquetSchema({
+      id: { type: "UTF8" },
+      time: { type: "TIMESTAMP_MILLIS" },
+      imei: { type: "UTF8" },
+      organizationId: { type: "UTF8" },
+      latitude: { type: "DOUBLE", optional: true },
+      longitude: { type: "DOUBLE", optional: true },
+      speed: { type: "DOUBLE", optional: true },
+      angle: { type: "DOUBLE", optional: true },
+      ignition: { type: "BOOLEAN" },
+      gsmSignal: { type: "INT32", optional: true },
+      externalVoltage: { type: "INT32", optional: true },
+      internalBatteryVoltage: { type: "INT32", optional: true },
+      gnssStatus: { type: "INT32", optional: true },
+      batteryLevel: { type: "INT32", optional: true },
+      movement: { type: "BOOLEAN", optional: true },
+      odometer: { type: "DOUBLE", optional: true },
+      tripOdometer: { type: "DOUBLE", optional: true },
+      fuelLevelRaw: { type: "INT32", optional: true },
+      serverCreatedAt: { type: "TIMESTAMP_MILLIS" }
+    });
+
+    const writer = await ParquetWriter.openFile(schema, filepath);
+
     let offset = 0;
     let totalExported = 0;
 
-    const csvHeader =
-      "id,time,imei,organization_id,latitude,longitude,speed,ignition,fuel_level_raw\n";
+    while (true) {
+      const batch = await prisma.telemetryRecord.findMany({
+        where: { time: { lt: cutoffDate } },
+        orderBy: { time: "asc" },
+        take: BATCH_SIZE,
+        skip: offset,
+      });
 
-    const gzip = createGzip();
-    const output = createWriteStream(filepath);
+      if (batch.length === 0) break;
 
-    const csvStream = new Readable({
-      async read() {
-        if (offset === 0) {
-          this.push(csvHeader);
-        }
-
-        const batch = await prisma.telemetryRecord.findMany({
-          where: { time: { lt: cutoffDate } },
-          orderBy: { time: "asc" },
-          take: BATCH_SIZE,
-          skip: offset,
+      for (const r of batch) {
+        await writer.appendRow({
+          id: r.id,
+          time: r.time,
+          imei: r.imei,
+          organizationId: r.organizationId,
+          latitude: r.latitude ?? null,
+          longitude: r.longitude ?? null,
+          speed: r.speed ?? null,
+          angle: r.angle ?? null,
+          ignition: r.ignition,
+          gsmSignal: r.gsmSignal ?? null,
+          externalVoltage: r.externalVoltage ?? null,
+          internalBatteryVoltage: r.internalBatteryVoltage ?? null,
+          gnssStatus: r.gnssStatus ?? null,
+          batteryLevel: r.batteryLevel ?? null,
+          movement: r.movement ?? null,
+          odometer: r.odometer ?? null,
+          tripOdometer: r.tripOdometer ?? null,
+          fuelLevelRaw: r.fuelLevelRaw ?? null,
+          serverCreatedAt: r.serverCreatedAt,
         });
+      }
 
-        if (batch.length === 0) {
-          this.push(null); // End stream
-          return;
-        }
+      offset += batch.length;
+      totalExported += batch.length;
+    }
 
-        const csvRows = batch
-          .map(
-            (r) =>
-              `${r.id},${r.time.toISOString()},${r.imei},${r.organizationId},` +
-              `${r.latitude ?? ""},${r.longitude ?? ""},${r.speed ?? ""},` +
-              `${r.ignition},${r.fuelLevelRaw ?? ""}`
-          )
-          .join("\n");
-
-        this.push(csvRows + "\n");
-        offset += batch.length;
-        totalExported += batch.length;
-      },
-    });
-
-    await pipeline(csvStream, gzip, output);
+    await writer.close();
 
     console.log(
       `[ARCHIVAL] ✓ Exported ${totalExported} records to ${filepath}`

@@ -7,7 +7,9 @@ dotenv.config();
 
 import { startConsumer, stopConsumer } from "./consumer";
 import { processTelemetryBatch, getProcessorStats } from "./processor";
+import { archiveColdStorage } from "./workers/cold-storage";
 import { prisma, redis } from "@fleet-vision/db";
+import cron from "node-cron";
 
 // ─── Main Entry Point ────────────────────────────────────────
 
@@ -51,6 +53,19 @@ async function main(): Promise<void> {
       );
     }
   }, 30_000);
+
+  // Schedule Cold Storage Archival (Daily at 2:30 PM)
+  const ENABLE_COLD_STORAGE = process.env.ENABLE_COLD_STORAGE === "true";
+  if (ENABLE_COLD_STORAGE) {
+    cron.schedule("30 14 * * *", () => {
+      console.log("[CRON] Triggering scheduled cold storage archival...");
+      archiveColdStorage().catch((err) => {
+        console.error("[CRON] ✗ Error during scheduled archival:", err);
+      });
+    });
+  } else {
+    console.log("[CRON] Cold storage archival cron is disabled via ENABLE_COLD_STORAGE flag.");
+  }
 }
 
 // ─── Graceful Shutdown ───────────────────────────────────────

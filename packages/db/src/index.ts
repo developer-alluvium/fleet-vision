@@ -11,6 +11,7 @@ export {
   getDeviceAuth,
   updateLiveMap,
   getLiveMap,
+  getLiveLocationsByImeis,
   publishLocationUpdate,
   publishJourneyRecords,
   cacheVehicleFuelSettings,

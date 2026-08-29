@@ -88,6 +88,40 @@ export async function getLiveMap(
 }
 
 /**
+ * Gets live locations for a specific batch of devices using a Redis pipeline.
+ */
+export async function getLiveLocationsByImeis(
+  orgId: string,
+  imeis: string[]
+): Promise<Record<string, object | null>> {
+  if (imeis.length === 0) return {};
+
+  const pipeline = redis.pipeline();
+  for (const imei of imeis) {
+    pipeline.hget(`live_map:org:${orgId}`, imei);
+  }
+
+  const results = await pipeline.exec();
+  const map: Record<string, object | null> = {};
+
+  imeis.forEach((imei, idx) => {
+    // Pipeline exec returns [error, result] for each command
+    const [err, raw] = results![idx];
+    if (!err && raw) {
+      try {
+        map[imei] = JSON.parse(raw as string);
+      } catch {
+        map[imei] = null;
+      }
+    } else {
+      map[imei] = null;
+    }
+  });
+
+  return map;
+}
+
+/**
  * Publishes a location update to Redis Pub/Sub channels.
  * Channel 1: location:org:{orgId}   → consumed by fleet stream SSE
  * Channel 2: location:device:{imei} → consumed by single-device live location

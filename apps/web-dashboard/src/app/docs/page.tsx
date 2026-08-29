@@ -19,6 +19,11 @@ export default function SwaggerDocsPage() {
           url: "/api/openapi.json",
           dom_id: "#swagger-ui",
           deepLinking: true,
+          filter: true,
+          docExpansion: "list",
+          defaultModelsExpandDepth: 3,
+          displayRequestDuration: true,
+          persistAuthorization: true,
           presets: [
             // @ts-ignore
             window.SwaggerUIBundle.presets.apis,
