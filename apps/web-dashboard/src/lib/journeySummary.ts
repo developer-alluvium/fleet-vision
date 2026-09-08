@@ -4,6 +4,7 @@ export interface JourneySummary {
   totalDistanceKm: number;
   drivingDurationMinutes: number;
   idleDurationMinutes: number;
+  stopDurationMinutes: number;
   maxSpeedKmh: number;
   avgSpeedKmh: number;
   startTime: string | null;
@@ -18,6 +19,7 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
       totalDistanceKm: 0,
       drivingDurationMinutes: 0,
       idleDurationMinutes: 0,
+      stopDurationMinutes: 0,
       maxSpeedKmh: 0,
       avgSpeedKmh: 0,
       startTime: null,
@@ -30,6 +32,7 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
   let totalDistanceMeters = 0;
   let drivingDurationMs = 0;
   let idleDurationMs = 0;
+  let stopDurationMs = 0;
   let maxSpeedKmh = 0;
 
   let prevPoint = points[0];
@@ -56,6 +59,8 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
         drivingDurationMs += timeDiffMs;
       } else if (isIdle) {
         idleDurationMs += timeDiffMs;
+      } else {
+        stopDurationMs += timeDiffMs;
       }
     }
 
@@ -83,6 +88,7 @@ export function calculateJourneySummary(points: Point[]): JourneySummary {
     totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
     drivingDurationMinutes: Math.round(drivingDurationMs / 60000),
     idleDurationMinutes: Math.round(idleDurationMs / 60000),
+    stopDurationMinutes: Math.round(stopDurationMs / 60000),
     maxSpeedKmh: Math.round(maxSpeedKmh),
     avgSpeedKmh: Number(avgSpeedKmh.toFixed(1)),
     startTime: new Date(points[0].time).toISOString(),

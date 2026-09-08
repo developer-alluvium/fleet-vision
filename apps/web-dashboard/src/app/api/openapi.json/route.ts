@@ -1590,6 +1590,7 @@ export async function GET() {
             totalDistanceKm: { type: "number", example: 120.5 },
             drivingDurationMinutes: { type: "integer", example: 150 },
             idleDurationMinutes: { type: "integer", example: 30 },
+            stopDurationMinutes: { type: "integer", example: 15 },
             maxSpeedKmh: { type: "integer", example: 85 },
             avgSpeedKmh: { type: "number", example: 48.2 },
             startTime: { type: "string", format: "date-time" },
