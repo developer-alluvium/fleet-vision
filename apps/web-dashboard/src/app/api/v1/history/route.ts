@@ -121,6 +121,7 @@ export async function GET(request: NextRequest) {
                 speed: record.speed || 0,
                 ignition: record.ignition,
                 fuelLevelRaw: record.fuelLevelRaw,
+                fuelLevelLiters: record.fuelLevelLiters,
                 odometer: record.odometer
               });
             }
@@ -144,6 +145,7 @@ export async function GET(request: NextRequest) {
         speed, 
         ignition,
         fuel_level_raw as "fuelLevelRaw",
+        fuel_level_liters as "fuelLevelLiters",
         odometer
       FROM telemetry_records
       WHERE imei = ${imei} 

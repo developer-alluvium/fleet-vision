@@ -538,12 +538,11 @@ export async function GET() {
           },
         },
       },
-      "/api/v1/vehicles/{vehicleId}/fuel-calibration": {
+      "/api/v1/vehicles/{vehicleId}/fuel-calibration-table": {
         get: {
           tags: ["Vehicles"],
-          summary: "Get Vehicle BLE Fuel Calibration",
-          description:
-            "Retrieves the active Bluetooth Low Energy (BLE) fuel sensor channel setting for a specific vehicle.",
+          summary: "Get Vehicle Fuel Calibration Table",
+          description: "Retrieves the piecewise linear calibration table (Hz to Liters mapping) for a vehicle.",
           security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
           parameters: [
             {
@@ -556,81 +555,10 @@ export async function GET() {
           ],
           responses: {
             "200": {
-              description: "Fuel calibration setting retrieved.",
+              description: "Fuel calibration table retrieved.",
               content: {
                 "application/json": {
-                  schema: { $ref: "#/components/schemas/FuelCalibration" },
-                },
-              },
-            },
-            "401": {
-              description: "Unauthorized.",
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/ErrorResponse" },
-                },
-              },
-            },
-            "403": {
-              description: "Forbidden - Accessing vehicle from another organization.",
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/ErrorResponse" },
-                },
-              },
-            },
-            "404": {
-              description: "Not Found - Vehicle does not exist.",
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/ErrorResponse" },
-                },
-              },
-            },
-            "500": {
-              description: "Internal server error.",
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/ErrorResponse" },
-                },
-              },
-            },
-          },
-        },
-        put: {
-          tags: ["Vehicles"],
-          summary: "Update Vehicle BLE Fuel Calibration",
-          description:
-            "Updates the BLE fuel channel assignment for a vehicle and automatically invalidates Redis settings cache so the ingestion worker instantly picks up the change.",
-          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
-          parameters: [
-            {
-              name: "vehicleId",
-              in: "path",
-              required: true,
-              schema: { type: "string" },
-              description: "Vehicle CUID",
-            },
-          ],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/UpdateFuelCalibrationRequest" },
-              },
-            },
-          },
-          responses: {
-            "200": {
-              description: "Fuel calibration updated successfully.",
-              content: {
-                "application/json": {
-                  schema: {
-                    type: "object",
-                    properties: {
-                      vehicle: { $ref: "#/components/schemas/Vehicle" },
-                    },
-                  },
+                  schema: { $ref: "#/components/schemas/FuelCalibrationTableResponse" },
                 },
               },
             },
@@ -658,11 +586,82 @@ export async function GET() {
                 },
               },
             },
-            "500": {
-              description: "Internal server error.",
+          },
+        },
+        put: {
+          tags: ["Vehicles"],
+          summary: "Update Vehicle Fuel Calibration Table",
+          description: "Replaces the entire fuel calibration table for a vehicle and invalidates the cache.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "vehicleId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Vehicle CUID",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UpdateFuelCalibrationTableRequest" },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Fuel calibration table updated successfully.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/FuelCalibrationTableResponse" },
+                },
+              },
+            },
+            "400": {
+              description: "Bad Request - Invalid calibration points.",
               content: {
                 "application/json": {
                   schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "401": {
+              description: "Unauthorized.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+        delete: {
+          tags: ["Vehicles"],
+          summary: "Clear Vehicle Fuel Calibration Table",
+          description: "Deletes all calibration points for a vehicle.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "vehicleId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Vehicle CUID",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Fuel calibration table cleared.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      success: { type: "boolean", example: true },
+                    },
+                  },
                 },
               },
             },
@@ -1501,17 +1500,31 @@ export async function GET() {
             device: { $ref: "#/components/schemas/Device" },
           },
         },
-        FuelCalibration: {
+        FuelCalibrationPoint: {
+          type: "object",
+          properties: {
+            rawValue: { type: "integer", example: 620 },
+            liters: { type: "number", example: 10.5 },
+          },
+        },
+        FuelCalibrationTableResponse: {
           type: "object",
           properties: {
             vehicleId: { type: "string", example: "veh_123456" },
-            bleFuelChannel: { type: "integer", nullable: true, example: 1 },
+            points: {
+              type: "array",
+              items: { $ref: "#/components/schemas/FuelCalibrationPoint" },
+            },
           },
         },
-        UpdateFuelCalibrationRequest: {
+        UpdateFuelCalibrationTableRequest: {
           type: "object",
+          required: ["points"],
           properties: {
-            bleFuelChannel: { type: "integer", nullable: true, example: 2 },
+            points: {
+              type: "array",
+              items: { $ref: "#/components/schemas/FuelCalibrationPoint" },
+            },
           },
         },
         RegisterDeviceRequest: {

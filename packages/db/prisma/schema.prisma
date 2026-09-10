@@ -89,12 +89,30 @@ model Vehicle {
   device          Device?
 
   // ── BLE Fuel Sensor ─────────────────────────────────────
-  bleFuelChannel               Int?     @map("ble_fuel_channel")             // 1–4 (which BLE sensor)
+  bleFuelChannel               Int?     @default(1) @map("ble_fuel_channel") // 1–4 (which BLE sensor)
+  calibrationPoints            FuelCalibrationPoint[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("vehicles")
+}
+
+/// A single calibration point mapping a sensor raw value to a known fuel volume.
+/// Multiple points form a piecewise-linear lookup table per vehicle.
+model FuelCalibrationPoint {
+  id        String  @id @default(cuid())
+  vehicleId String  @map("vehicle_id")
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  rawValue  Int     @map("raw_value")    // Escort TD-BLE raw Hz/CNT reading
+  liters    Float                         // Known fuel volume at this reading
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([vehicleId, rawValue])          // No duplicate raw values per vehicle
+  @@index([vehicleId])
+  @@map("fuel_calibration_points")
 }
 
 /// A geofence polygon with PostGIS spatial indexing.
@@ -139,6 +157,7 @@ model TelemetryRecord {
 
   // ── BLE Fuel Sensor Data ──────────────────────────────
   fuelLevelRaw           Int?     @map("fuel_level_raw")         // IO 270/273/276/279 raw value
+  fuelLevelLiters        Float?   @map("fuel_level_liters")      // Interpolated volume
 
   serverCreatedAt        DateTime @default(now()) @map("server_created_at") @db.Timestamptz
 

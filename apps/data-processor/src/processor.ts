@@ -1,4 +1,4 @@
-import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings } from "@fleet-vision/db";
+import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings, getCachedCalibrationTable, rawToLiters } from "@fleet-vision/db";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -62,6 +62,7 @@ export async function processTelemetryBatch(
     gnssStatus: number | null;
     batteryLevel: number | null;
     fuelLevelRaw: number | null;
+    fuelLevelLiters: number | null;
     movement: boolean | null;
     angle: number | null;
     odometer: number | null;
@@ -126,6 +127,7 @@ export async function processTelemetryBatch(
 
     const { orgId } = auth;
     const fuelSettings = await getCachedFuelSettings(imei);
+    const calibrationTable = await getCachedCalibrationTable(imei);
 
     // ── 2. Build telemetry records with orgId injected ─────
     // Also collect per-device journey records for SSE publishing
@@ -149,17 +151,20 @@ export async function processTelemetryBatch(
         false;
 
       let fuelLevelRaw: number | null = null;
+      let fuelLevelLiters: number | null = null;
 
-      if (fuelSettings?.bleFuelChannel) {
-        const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
-        const ioId = ioMapping[fuelSettings.bleFuelChannel as keyof typeof ioMapping];
-        if (ioId) {
-          fuelLevelRaw = record.io_elements[String(ioId)] ?? null;
+      const channel = fuelSettings?.bleFuelChannel || 1;
+      const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
+      const ioId = ioMapping[channel as keyof typeof ioMapping];
+      if (ioId) {
+        fuelLevelRaw = record.io_elements[String(ioId)] ?? null;
+        if (fuelLevelRaw !== null && calibrationTable) {
+          fuelLevelLiters = rawToLiters(fuelLevelRaw, calibrationTable);
         }
       }
 
       console.log(
-        `[PROCESSOR] ⛽ IMEI: ${imei} | Lat: ${record.latitude}, Lng: ${record.longitude} | Speed: ${record.speed} | Fuel Level Raw: ${fuelLevelRaw ?? "N/A"} | IO Elements:`,
+        `[PROCESSOR] ⛽ IMEI: ${imei} | Lat: ${record.latitude}, Lng: ${record.longitude} | Speed: ${record.speed} | Fuel Level Raw: ${fuelLevelRaw ?? "N/A"} | Fuel L: ${fuelLevelLiters ?? "N/A"} | IO Elements:`,
         record.io_elements
       );
 
@@ -178,6 +183,7 @@ export async function processTelemetryBatch(
         gnssStatus: record.io_elements["69"] ?? null,
         batteryLevel: record.io_elements["113"] ?? null,
         fuelLevelRaw,
+        fuelLevelLiters,
         movement: record.io_elements["240"] !== undefined ? record.io_elements["240"] === 1 : null,
         odometer: record.io_elements["16"] ?? null,
         tripOdometer: record.io_elements["199"] ?? null,
@@ -201,12 +207,15 @@ export async function processTelemetryBatch(
     const latestRecord = sortedRecords[sortedRecords.length - 1];
 
     let latestFuelLevelRaw: number | null = null;
+    let latestFuelLevelLiters: number | null = null;
 
-    if (fuelSettings?.bleFuelChannel) {
-      const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
-      const ioId = ioMapping[fuelSettings.bleFuelChannel as keyof typeof ioMapping];
-      if (ioId) {
-        latestFuelLevelRaw = latestRecord.io_elements[String(ioId)] ?? null;
+    const channel = fuelSettings?.bleFuelChannel || 1;
+    const ioMapping = { 1: 270, 2: 273, 3: 276, 4: 279 };
+    const ioId = ioMapping[channel as keyof typeof ioMapping];
+    if (ioId) {
+      latestFuelLevelRaw = latestRecord.io_elements[String(ioId)] ?? null;
+      if (latestFuelLevelRaw !== null && calibrationTable) {
+        latestFuelLevelLiters = rawToLiters(latestFuelLevelRaw, calibrationTable);
       }
     }
 
@@ -230,6 +239,7 @@ export async function processTelemetryBatch(
             (latestRecord.speed !== undefined && latestRecord.speed > 0) ||
             false,
           fuelLevelRaw: latestFuelLevelRaw,
+          fuelLevelLiters: latestFuelLevelLiters,
           odometer: latestRecord.io_elements["16"] ?? null,
           timestamp: latestRecord.timestamp,
           updatedAt: new Date().toISOString(),

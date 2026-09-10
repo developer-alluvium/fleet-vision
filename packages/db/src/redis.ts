@@ -214,3 +214,26 @@ export async function getCachedFuelSettings(
 export async function invalidateFuelSettingsCache(imei: string): Promise<void> {
   await redis.del(`fuel_settings:${imei}`);
 }
+
+// ─── Fuel Calibration Table Cache ─────────────────────────
+
+import type { CalibrationPoint } from "./fuelCalibration";
+
+export async function cacheCalibrationTable(imei: string, points: CalibrationPoint[]): Promise<void> {
+  await redis.setex(`fuel_cal:${imei}`, 3600, JSON.stringify(points));
+}
+
+export async function getCachedCalibrationTable(imei: string): Promise<CalibrationPoint[] | null> {
+  const data = await redis.get(`fuel_cal:${imei}`);
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as CalibrationPoint[];
+  } catch {
+    return null;
+  }
+}
+
+export async function invalidateCalibrationCache(imei: string): Promise<void> {
+  await redis.del(`fuel_cal:${imei}`);
+}
+
