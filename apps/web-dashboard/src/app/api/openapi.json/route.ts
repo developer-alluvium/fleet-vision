@@ -1063,6 +1063,47 @@ export async function GET() {
           },
         },
       },
+      "/api/v1/stream/fleet-status": {
+        get: {
+          tags: ["Real-Time & Telemetry"],
+          summary: "Stream Real-Time Fleet Status Summary (SSE)",
+          description:
+            "Establishes a persistent Server-Sent Events (SSE) connection that streams real-time fleet status counts (Running, Idle, Stopped, Inactive, No Data) across the organization.\n\n" +
+            "**Events emitted:**\n" +
+            "- `init`: Initial payload containing the latest status counts and computed timestamp upon connection.\n" +
+            "- `update`: Pushed instantly when a vehicle transitions between states or counts change.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          responses: {
+            "200": {
+              description: "SSE connection established (Content-Type: text/event-stream).",
+            },
+            "401": {
+              description: "Unauthorized.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "403": {
+              description: "Forbidden.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "500": {
+              description: "Internal server error.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
       "/api/v1/journey": {
         get: {
           tags: ["Real-Time & Telemetry"],

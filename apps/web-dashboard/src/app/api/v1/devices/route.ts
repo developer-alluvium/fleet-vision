@@ -141,13 +141,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const devices = await prisma.device.findMany({
-      where: { organizationId: orgId },
-      include: { vehicle: true },
-      orderBy: { createdAt: "desc" },
-    });
+    const page = parseInt(searchParams.get("page") || "1", 10);
+    const limit = parseInt(searchParams.get("limit") || "10", 10);
+    const search = searchParams.get("search") || "";
 
-    return NextResponse.json({ devices });
+    const skip = (page - 1) * limit;
+
+    const where: any = { organizationId: orgId };
+
+    if (search) {
+      where.OR = [
+        { imei: { contains: search, mode: "insensitive" } },
+        { status: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [devices, totalCount] = await Promise.all([
+      prisma.device.findMany({
+        where,
+        include: { vehicle: true },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.device.count({ where }),
+    ]);
+
+    return NextResponse.json({ devices, totalCount });
   } catch (error: any) {
     console.error("[API] GET /api/v1/devices error:", error);
     if (error.message && (error.message.includes("Authentication required") || error.message.includes("Invalid token") || error.message.includes("API key"))) {

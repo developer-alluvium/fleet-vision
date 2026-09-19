@@ -75,7 +75,8 @@ export async function GET(request: NextRequest) {
           } catch (err) {
             clearInterval(heartbeat);
           }
-        }, 30000);
+        }, 
+        0);
 
         // Cleanup when client disconnects
         const cleanup = () => {

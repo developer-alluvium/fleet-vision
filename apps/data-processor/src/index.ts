@@ -8,7 +8,9 @@ dotenv.config();
 import { startConsumer, stopConsumer } from "./consumer";
 import { processTelemetryBatch, getProcessorStats } from "./processor";
 import { archiveColdStorage } from "./workers/cold-storage";
+import { recomputeAllOrgStatuses } from "./workers/fleet-status";
 import { prisma, redis } from "@fleet-vision/db";
+
 import cron from "node-cron";
 
 // ─── Main Entry Point ────────────────────────────────────────
@@ -66,7 +68,15 @@ async function main(): Promise<void> {
   } else {
     console.log("[CRON] Cold storage archival cron is disabled via ENABLE_COLD_STORAGE flag.");
   }
+
+  // Schedule Fleet Status recomputation every 60s for time-based transitions
+  cron.schedule("* * * * *", () => {
+    recomputeAllOrgStatuses().catch((err) => {
+      console.error("[CRON] ✗ Error during fleet status recomputation:", err);
+    });
+  });
 }
+
 
 // ─── Graceful Shutdown ───────────────────────────────────────
 

@@ -20,9 +20,16 @@ export {
   cacheCalibrationTable,
   getCachedCalibrationTable,
   invalidateCalibrationCache,
+  // Fleet Status Helpers
+  computeDeviceStatus,
+  updateFleetStatus,
+  getFleetStatusSummary,
+  getFleetStatusDetails,
+  publishFleetStatusUpdate,
 } from "./redis";
 
 export * from "./fuelCalibration";
+
 
 // Global singleton to prevent multiple PrismaClient instances in development
 // (hot-reload creates new modules but we want to reuse the DB connection pool)

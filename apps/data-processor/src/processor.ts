@@ -1,4 +1,5 @@
 import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings, getCachedCalibrationTable, rawToLiters } from "@fleet-vision/db";
+import { recomputeFleetStatus } from "./workers/fleet-status";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -298,4 +299,12 @@ export async function processTelemetryBatch(
     }
   );
   await Promise.all(journeyPromises);
+
+  // ── 7. Recompute Fleet Status for affected orgs ──
+  const affectedOrgIds = new Set(
+    Array.from(liveMapUpdates.values()).map(u => u.orgId)
+  );
+  await Promise.all(
+    Array.from(affectedOrgIds).map(orgId => recomputeFleetStatus(orgId))
+  );
 }

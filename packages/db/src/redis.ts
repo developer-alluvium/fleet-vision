@@ -237,3 +237,111 @@ export async function invalidateCalibrationCache(imei: string): Promise<void> {
   await redis.del(`fuel_cal:${imei}`);
 }
 
+// ─── Fleet Status Helpers ────────────────────────────────────
+
+export type DeviceStatus = 'RUNNING' | 'IDLE' | 'STOPPED' | 'INACTIVE' | 'NO_DATA';
+
+/**
+ * Computes the status of a single device based on its live map payload.
+ * Pure function — no I/O.
+ */
+export function computeDeviceStatus(
+  payload: { ignition?: boolean; speed?: number; timestamp?: string; updatedAt?: string } | null,
+  nowMs: number,
+  staleThresholdMs: number = 5 * 60 * 1000,   // default: 5 minutes
+  inactiveThresholdMs: number = 24 * 60 * 60 * 1000 // default: 24 hours
+): DeviceStatus {
+  if (!payload || !payload.timestamp) {
+    return 'NO_DATA';
+  }
+
+  const lastSeenMs = new Date(payload.timestamp).getTime();
+  const ageMs = nowMs - lastSeenMs;
+
+  if (ageMs >= inactiveThresholdMs) {
+    return 'INACTIVE';
+  }
+
+  if (payload.ignition) {
+    if (ageMs < staleThresholdMs) {
+      if (payload.speed && payload.speed > 0) {
+        return 'RUNNING';
+      }
+      return 'IDLE';
+    }
+    // If ignition is on but data is stale, it's stopped/offline.
+    return 'STOPPED';
+  }
+
+  return 'STOPPED';
+}
+
+/**
+ * Stores per-device status in Redis hash and a summary count hash.
+ */
+export async function updateFleetStatus(
+  orgId: string,
+  statusMap: Record<string, string>,
+  summary: Record<string, number>
+): Promise<void> {
+  const pipeline = redis.pipeline();
+  
+  if (Object.keys(statusMap).length > 0) {
+    pipeline.hset(`fleet_status:org:${orgId}`, statusMap);
+  }
+  
+  if (Object.keys(summary).length > 0) {
+    // Clear old summary first to prevent stale keys if a status drops to 0
+    pipeline.del(`fleet_status_summary:org:${orgId}`);
+    pipeline.hset(`fleet_status_summary:org:${orgId}`, summary);
+  }
+
+  pipeline.set(`fleet_status_ts:org:${orgId}`, new Date().toISOString());
+  
+  await pipeline.exec();
+}
+
+/**
+ * Returns the pre-computed fleet status summary from Redis.
+ */
+export async function getFleetStatusSummary(
+  orgId: string
+): Promise<{ summary: Record<string, number>; computedAt: string | null }> {
+  const [summaryRaw, computedAt] = await Promise.all([
+    redis.hgetall(`fleet_status_summary:org:${orgId}`),
+    redis.get(`fleet_status_ts:org:${orgId}`)
+  ]);
+
+  const summary: Record<string, number> = {};
+  for (const [key, val] of Object.entries(summaryRaw)) {
+    summary[key] = parseInt(val, 10) || 0;
+  }
+
+  return { summary, computedAt };
+}
+
+/**
+ * Returns per-device status breakdown from Redis.
+ */
+export async function getFleetStatusDetails(
+  orgId: string
+): Promise<Record<string, string>> {
+  return await redis.hgetall(`fleet_status:org:${orgId}`);
+}
+
+/**
+ * Publishes status change events to Pub/Sub for real-time SSE streaming.
+ */
+export async function publishFleetStatusUpdate(
+  orgId: string,
+  summary: Record<string, number>,
+  changedDevices: Array<{ imei: string; previousStatus: string; newStatus: string }>
+): Promise<void> {
+  const message = JSON.stringify({
+    counts: summary,
+    changed: changedDevices,
+    timestamp: new Date().toISOString()
+  });
+  await redis.publish(`fleet_status:org:${orgId}`, message);
+}
+

@@ -175,13 +175,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const vehicles = await prisma.vehicle.findMany({
-      where: { organizationId: orgId },
-      include: { device: true },
-      orderBy: { createdAt: "desc" },
-    });
+    const page = parseInt(searchParams.get("page") || "1", 10);
+    const limit = parseInt(searchParams.get("limit") || "10", 10);
+    const search = searchParams.get("search") || "";
 
-    return NextResponse.json({ vehicles });
+    const skip = (page - 1) * limit;
+
+    const where: any = { organizationId: orgId };
+
+    if (search) {
+      where.OR = [
+        { plateNumber: { contains: search, mode: "insensitive" } },
+        { make: { contains: search, mode: "insensitive" } },
+        { model: { contains: search, mode: "insensitive" } },
+        { vin: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [vehicles, totalCount] = await Promise.all([
+      prisma.vehicle.findMany({
+        where,
+        include: { device: true },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.vehicle.count({ where }),
+    ]);
+
+    return NextResponse.json({ vehicles, totalCount });
   } catch (error: any) {
     console.error("[API] GET /api/v1/vehicles error:", error);
     if (
