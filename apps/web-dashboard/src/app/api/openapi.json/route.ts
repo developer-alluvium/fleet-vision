@@ -1022,6 +1022,66 @@ export async function GET() {
           },
         },
       },
+      "/api/v1/stream/devices": {
+        get: {
+          tags: ["Real-Time & Telemetry"],
+          summary: "Stream Filtered Realtime Devices (SSE)",
+          description: "Long-lived Server-Sent Events (SSE) stream delivering realtime data for all devices of the authenticated organization. Supports server-side status filtering.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "status",
+              in: "query",
+              required: false,
+              schema: { type: "string", default: "all" },
+              description: "Comma-separated, case-insensitive filter. Allowed: all, running, idle, stopped, inactive, no_data.",
+            },
+            {
+              name: "includeVehicle",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: true },
+              description: "When false, the vehicle key is omitted from payloads.",
+            },
+            {
+              name: "fields",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Optional comma-separated whitelist of top-level payload keys.",
+            },
+            {
+              name: "token",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Bearer <jwt> for EventSource clients that cannot set headers.",
+            }
+          ],
+          responses: {
+            "200": {
+              description: "SSE Stream started successfully. Begins with an `init` event.",
+              content: {
+                "text/event-stream": {
+                  schema: { $ref: "#/components/schemas/StreamInitResponse" }
+                }
+              }
+            },
+            "400": {
+              description: "Invalid status filter",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+            },
+            "401": {
+              description: "Authentication required",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+            },
+            "429": {
+              description: "Too many concurrent streams for this organization",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+            }
+          }
+        }
+      },
       "/api/v1/stream/fleet": {
         get: {
           tags: ["Real-Time & Telemetry"],
@@ -1255,6 +1315,79 @@ export async function GET() {
       // ─────────────────────────────────────────────────────────
       // ANALYTICS & HISTORY
       // ─────────────────────────────────────────────────────────
+      "/api/v1/reports/utilization": {
+        get: {
+          tags: ["Analytics & History"],
+          summary: "Get Advanced Utilization Report",
+          description:
+            "Queries TimescaleDB telemetry data over a date range and computes per-vehicle driving, idle, and stopped durations, distance, speed, fuel, and utilization percentages.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "start",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "Start timestamp filter (ISO 8601). Defaults to 24 hours ago.",
+            },
+            {
+              name: "end",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "End timestamp filter (ISO 8601). Defaults to current time.",
+            },
+            {
+              name: "vehicleIds",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Comma-separated list of vehicle IDs to filter by.",
+            },
+            {
+              name: "groupBy",
+              in: "query",
+              required: false,
+              schema: { type: "string", enum: ["hour", "day", "week"], default: "day" },
+              description: "Time bucketing granularity for time series data.",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Utilization report retrieved successfully.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/UtilizationReportResponse" },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid parameters or date range exceeds 90 days.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "401": {
+              description: "Unauthorized.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "500": {
+              description: "Internal server error.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
       "/api/v1/history": {
         get: {
           tags: ["Analytics & History"],
@@ -1365,6 +1498,42 @@ export async function GET() {
         },
       },
       schemas: {
+        DeviceRealtimePayload: {
+          type: "object",
+          properties: {
+            imei: { type: "string" },
+            deviceId: { type: "string" },
+            deviceStatus: { type: "string" },
+            status: { type: "string" },
+            previousStatus: { type: "string" },
+            latitude: { type: "number", nullable: true },
+            longitude: { type: "number", nullable: true },
+            speed: { type: "number", nullable: true },
+            angle: { type: "number", nullable: true },
+            ignition: { type: "boolean", nullable: true },
+            fuelLevelRaw: { type: "number", nullable: true },
+            fuelLevelLiters: { type: "number", nullable: true },
+            odometer: { type: "number", nullable: true },
+            timestamp: { type: "string", format: "date-time", nullable: true },
+            updatedAt: { type: "string", format: "date-time", nullable: true },
+            lastSeenAgeSec: { type: "number", nullable: true },
+            vehicle: { type: "object", nullable: true }
+          }
+        },
+        StreamInitResponse: {
+          type: "object",
+          properties: {
+            organizationId: { type: "string" },
+            serverTime: { type: "string", format: "date-time" },
+            filter: { type: "object" },
+            thresholds: { type: "object" },
+            summary: { type: "object" },
+            devices: {
+              type: "array",
+              items: { $ref: "#/components/schemas/DeviceRealtimePayload" }
+            }
+          }
+        },
         TrackVehicleRequest: {
           type: "object",
           required: ["imeis"],
@@ -1652,6 +1821,93 @@ export async function GET() {
             startOdometer: { type: "number", nullable: true, example: 12050.2 },
             endOdometer: { type: "number", nullable: true, example: 12170.7 },
           },
+        },
+        UtilizationReportResponse: {
+          type: "object",
+          properties: {
+            orgId: { type: "string" },
+            period: {
+              type: "object",
+              properties: {
+                start: { type: "string", format: "date-time" },
+                end: { type: "string", format: "date-time" },
+              }
+            },
+            groupBy: { type: "string" },
+            fleetSummary: {
+              type: "object",
+              nullable: true,
+              properties: {
+                totalVehicles: { type: "number" },
+                vehiclesWithData: { type: "number" },
+                totalDistanceKm: { type: "number" },
+                totalDrivingMinutes: { type: "number" },
+                totalIdleMinutes: { type: "number" },
+                totalStoppedMinutes: { type: "number" },
+                avgUtilizationPercent: { type: "number" },
+                avgDailyDistanceKm: { type: "number" },
+                maxSpeedKmh: { type: "number" },
+                avgSpeedKmh: { type: "number" },
+                fuelConsumedLiters: { type: "number", nullable: true }
+              }
+            },
+            vehicles: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  vehicleId: { type: "string" },
+                  plateNumber: { type: "string" },
+                  imei: { type: "string" },
+                  make: { type: "string", nullable: true },
+                  model: { type: "string", nullable: true },
+                  summary: {
+                    type: "object",
+                    properties: {
+                      totalDistanceKm: { type: "number" },
+                      drivingMinutes: { type: "number" },
+                      idleMinutes: { type: "number" },
+                      stoppedMinutes: { type: "number" },
+                      utilizationPercent: { type: "number" },
+                      maxSpeedKmh: { type: "number" },
+                      avgSpeedKmh: { type: "number" },
+                      telemetryPoints: { type: "number" },
+                      startOdometer: { type: "number", nullable: true },
+                      endOdometer: { type: "number", nullable: true },
+                      fuelStartLiters: { type: "number", nullable: true },
+                      fuelEndLiters: { type: "number", nullable: true },
+                      fuelConsumedLiters: { type: "number", nullable: true }
+                    }
+                  },
+                  timeSeries: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        bucket: { type: "string", format: "date-time" },
+                        distanceKm: { type: "number" },
+                        drivingMinutes: { type: "number" },
+                        idleMinutes: { type: "number" },
+                        stoppedMinutes: { type: "number" },
+                        maxSpeedKmh: { type: "number" },
+                        avgSpeedKmh: { type: "number" },
+                        telemetryPoints: { type: "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            metadata: {
+              type: "object",
+              properties: {
+                queryTimeMs: { type: "number" },
+                vehiclesQueried: { type: "number" },
+                vehiclesWithData: { type: "number" },
+                totalTelemetryPoints: { type: "number" }
+              }
+            }
+          }
         },
         HistoryResponse: {
           type: "object",

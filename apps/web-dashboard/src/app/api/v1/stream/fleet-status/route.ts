@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { authenticate } from "@/lib/auth";
 import Redis from "ioredis";
-import { prisma, getLiveMap, getFleetStatusSummary, computeDeviceStatus } from "@fleet-vision/db";
+import { prisma, getLiveMap, getFleetStatusSummary, computeDeviceStatus, getFleetDashboardPayload, FleetDashboardPayload } from "@fleet-vision/db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,40 +24,85 @@ export async function GET(request: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         // 1. Send initial snapshot immediately
-        const [devices, liveMap, existingSummary] = await Promise.all([
+        const [devices, liveMap, existingSummary, dashboardPayload] = await Promise.all([
           prisma.device.findMany({ where: { organizationId: orgId }, select: { imei: true } }),
           getLiveMap(orgId),
-          getFleetStatusSummary(orgId)
+          getFleetStatusSummary(orgId),
+          getFleetDashboardPayload(orgId)
         ]);
         
-        let counts = existingSummary.summary;
-        let computedAt = existingSummary.computedAt;
+        let payloadToSend = dashboardPayload;
 
-        // Fallback: If no summary exists in Redis, calculate it on the fly for the init event
-        if (Object.keys(counts).length === 0) {
+        // Fallback: If no full payload exists in Redis, calculate a basic one on the fly for the init event
+        if (!payloadToSend) {
           const STALE_THRESHOLD_MS = parseInt(process.env.STALE_THRESHOLD_MINUTES || "5", 10) * 60 * 1000;
           const INACTIVE_THRESHOLD_MS = parseInt(process.env.INACTIVE_THRESHOLD_HOURS || "24", 10) * 60 * 60 * 1000;
           const nowMs = Date.now();
 
-          counts = {
-            TOTAL: devices.length,
-            RUNNING: 0,
-            IDLE: 0,
-            STOPPED: 0,
-            INACTIVE: 0,
-            NO_DATA: 0,
-          };
+          let counts = existingSummary.summary;
+          if (Object.keys(counts).length === 0) {
+            counts = {
+              TOTAL: devices.length,
+              RUNNING: 0,
+              IDLE: 0,
+              STOPPED: 0,
+              INACTIVE: 0,
+              NO_DATA: 0,
+            };
 
-          for (const device of devices) {
-            const imei = device.imei;
-            const payload = liveMap[imei] as any;
-            const status = computeDeviceStatus(payload || null, nowMs, STALE_THRESHOLD_MS, INACTIVE_THRESHOLD_MS);
-            counts[status]++;
+            for (const device of devices) {
+              const imei = device.imei;
+              const payload = liveMap[imei] as any;
+              const status = computeDeviceStatus(payload || null, nowMs, STALE_THRESHOLD_MS, INACTIVE_THRESHOLD_MS);
+              counts[status]++;
+            }
           }
-          computedAt = new Date(nowMs).toISOString();
+
+          payloadToSend = {
+            counts,
+            fleetKpis: {
+              utilizationRate: 0,
+              activeVehicles: counts.RUNNING + counts.IDLE + counts.STOPPED,
+              inactiveVehicles: counts.INACTIVE + counts.NO_DATA,
+              connectedDevices: 0,
+              disconnectedDevices: 0,
+            },
+            fuelOverview: {
+              vehiclesWithFuelData: 0,
+              vehiclesWithoutFuelData: 0,
+              fleetAverageFuelLevel: 0,
+              fleetTotalFuelLiters: 0,
+              lowFuelVehicles: 0,
+              lowFuelThreshold: 50,
+              criticalFuelVehicles: 0,
+              criticalFuelThreshold: 20,
+              fuelDistribution: { critical_0_20: 0, low_20_50: 0, medium_50_100: 0, good_100_200: 0, full_200_plus: 0 },
+            },
+            utilizationMetrics: {
+              engineOnCount: 0,
+              engineOffCount: 0,
+              engineOnRate: 0,
+              movingCount: 0,
+              stationaryCount: 0,
+              movingRate: 0,
+              idleRate: 0,
+            },
+            deviceHealth: {
+              freshDataCount: 0,
+              staleDataCount: 0,
+              noDataCount: 0,
+              dataFreshnessRate: 0,
+              oldestDataAge: "N/A",
+              oldestDataAgeMs: 0,
+              oldestDataImei: null,
+            },
+            activityFeed: [],
+            changed: [],
+            computedAt: new Date(nowMs).toISOString(),
+          };
         }
 
-        controller.enqueue(`event: init\ndata: ${JSON.stringify({ counts, computedAt })}\n\n`);
+        controller.enqueue(`event: init\ndata: ${JSON.stringify(payloadToSend)}\n\n`);
 
         // 2. Subscribe to Redis Pub/Sub for ongoing live changes
         const channel = `fleet_status:org:${orgId}`;

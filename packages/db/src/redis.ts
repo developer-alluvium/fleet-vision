@@ -88,6 +88,31 @@ export async function getLiveMap(
 }
 
 /**
+ * Gets all live device locations for an organization safely.
+ * Returns an empty object on error instead of throwing.
+ */
+export async function getLiveMapSafe(
+  orgId: string
+): Promise<Record<string, object>> {
+  try {
+    const raw = await redis.hgetall(`live_map:org:${orgId}`);
+    if (!raw) return {};
+    const result: Record<string, object> = {};
+    for (const [imei, json] of Object.entries(raw)) {
+      try {
+        result[imei] = JSON.parse(json);
+      } catch {
+        result[imei] = { raw: json };
+      }
+    }
+    return result;
+  } catch (err) {
+    console.error(`[Redis] getLiveMapSafe error for org ${orgId}:`, err);
+    return {};
+  }
+}
+
+/**
  * Gets live locations for a specific batch of devices using a Redis pipeline.
  */
 export async function getLiveLocationsByImeis(
@@ -241,6 +266,60 @@ export async function invalidateCalibrationCache(imei: string): Promise<void> {
 
 export type DeviceStatus = 'RUNNING' | 'IDLE' | 'STOPPED' | 'INACTIVE' | 'NO_DATA';
 
+export interface FleetDashboardPayload {
+  counts: Record<string, number>;
+  fleetKpis: {
+    utilizationRate: number;
+    activeVehicles: number;
+    inactiveVehicles: number;
+    connectedDevices: number;
+    disconnectedDevices: number;
+  };
+  fuelOverview: {
+    vehiclesWithFuelData: number;
+    vehiclesWithoutFuelData: number;
+    fleetAverageFuelLevel: number;
+    fleetTotalFuelLiters: number;
+    lowFuelVehicles: number;
+    lowFuelThreshold: number;
+    criticalFuelVehicles: number;
+    criticalFuelThreshold: number;
+    fuelDistribution: {
+      critical_0_20: number;
+      low_20_50: number;
+      medium_50_100: number;
+      good_100_200: number;
+      full_200_plus: number;
+    };
+  };
+  utilizationMetrics: {
+    engineOnCount: number;
+    engineOffCount: number;
+    engineOnRate: number;
+    movingCount: number;
+    stationaryCount: number;
+    movingRate: number;
+    idleRate: number;
+  };
+  deviceHealth: {
+    freshDataCount: number;
+    staleDataCount: number;
+    noDataCount: number;
+    dataFreshnessRate: number;
+    oldestDataAge: string;
+    oldestDataAgeMs: number;
+    oldestDataImei: string | null;
+  };
+  activityFeed: Array<{
+    type: string;
+    imei: string;
+    timestamp: string;
+    [key: string]: any;
+  }>;
+  changed: Array<{ imei: string; previousStatus: string; newStatus: string }>;
+  computedAt: string;
+}
+
 /**
  * Computes the status of a single device based on its live map payload.
  * Pure function — no I/O.
@@ -278,11 +357,13 @@ export function computeDeviceStatus(
 
 /**
  * Stores per-device status in Redis hash and a summary count hash.
+ * Also caches the full dashboard payload for init event fallback.
  */
 export async function updateFleetStatus(
   orgId: string,
   statusMap: Record<string, string>,
-  summary: Record<string, number>
+  summary: Record<string, number>,
+  dashboardPayload?: FleetDashboardPayload
 ): Promise<void> {
   const pipeline = redis.pipeline();
   
@@ -297,6 +378,10 @@ export async function updateFleetStatus(
   }
 
   pipeline.set(`fleet_status_ts:org:${orgId}`, new Date().toISOString());
+  
+  if (dashboardPayload) {
+    pipeline.set(`fleet_dashboard:org:${orgId}`, JSON.stringify(dashboardPayload));
+  }
   
   await pipeline.exec();
 }
@@ -321,6 +406,21 @@ export async function getFleetStatusSummary(
 }
 
 /**
+ * Returns the full cached dashboard payload.
+ */
+export async function getFleetDashboardPayload(
+  orgId: string
+): Promise<FleetDashboardPayload | null> {
+  const data = await redis.get(`fleet_dashboard:org:${orgId}`);
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as FleetDashboardPayload;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns per-device status breakdown from Redis.
  */
 export async function getFleetStatusDetails(
@@ -334,14 +434,13 @@ export async function getFleetStatusDetails(
  */
 export async function publishFleetStatusUpdate(
   orgId: string,
-  summary: Record<string, number>,
-  changedDevices: Array<{ imei: string; previousStatus: string; newStatus: string }>
+  dashboardPayload: FleetDashboardPayload
 ): Promise<void> {
-  const message = JSON.stringify({
-    counts: summary,
-    changed: changedDevices,
-    timestamp: new Date().toISOString()
-  });
-  await redis.publish(`fleet_status:org:${orgId}`, message);
+  const message = JSON.stringify(dashboardPayload);
+  await Promise.all([
+    redis.publish(`fleet_status:org:${orgId}`, message),
+    // Also cache for init event
+    redis.set(`fleet_dashboard:org:${orgId}`, message),
+  ]);
 }
 

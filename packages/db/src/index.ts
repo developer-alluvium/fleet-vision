@@ -11,6 +11,7 @@ export {
   getDeviceAuth,
   updateLiveMap,
   getLiveMap,
+  getLiveMapSafe,
   getLiveLocationsByImeis,
   publishLocationUpdate,
   publishJourneyRecords,
@@ -26,7 +27,10 @@ export {
   getFleetStatusSummary,
   getFleetStatusDetails,
   publishFleetStatusUpdate,
+  getFleetDashboardPayload,
 } from "./redis";
+
+export type { FleetDashboardPayload, DeviceStatus } from "./redis";
 
 export * from "./fuelCalibration";
 
