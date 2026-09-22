@@ -388,6 +388,79 @@ export async function GET() {
           },
         },
       },
+      "/api/v1/organizations/{id}": {
+        get: {
+          tags: ["Organizations"],
+          summary: "Get Detailed Organization Information",
+          description:
+            "Retrieves detailed profile information for a specific organization by its unique ID, including operational metrics and aggregate counts for associated users, GPS tracker hardware (devices), fleet vehicles, and geofences.\n\n" +
+            "### Access Control & Tenant Scoping\n" +
+            "- **Multi-Tenant Isolation**: Callers are restricted to viewing their own organization (`auth.organizationId === params.id`). Any attempt to inspect foreign tenant data returns `403 Forbidden`.\n" +
+            "- **Role-Based Attribute Redaction**: Sensitive administrative secrets such as `apiKey` and `stripeCustomerId` are automatically redacted unless the requesting user possesses the `ADMIN` role or authentication was performed using a valid Organization API Key.",
+          security: [
+            { bearerAuth: [] },
+            { apiKeyAuth: [] },
+            { apiKeyAuthQuery: [] },
+            { cookieAuth: [] },
+          ],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              description: "The unique identifier (`cuid`) of the organization.",
+              schema: {
+                type: "string",
+                example: "cm0123456789",
+              },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Detailed organization information and resource counts retrieved successfully.",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/OrganizationDetailsResponse",
+                  },
+                },
+              },
+            },
+            "401": {
+              description: "Unauthorized - Missing or invalid authentication token / API key.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "403": {
+              description: "Forbidden - Caller does not belong to the requested organization.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "404": {
+              description: "Not Found - Organization with the specified ID does not exist.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "500": {
+              description: "Internal server error.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
 
       // ─────────────────────────────────────────────────────────
       // VEHICLES
@@ -1388,6 +1461,79 @@ export async function GET() {
           },
         },
       },
+      "/api/v1/reports/fuel-analytics": {
+        get: {
+          tags: ["Analytics & History"],
+          summary: "Get Fleet Fuel Analytics Report",
+          description:
+            "Queries TimescaleDB telemetry data over a date range and computes comprehensive fleet-wide and per-vehicle fuel metrics including consumption, efficiency (km/L), refuel/drain event detection, and fuel level time-series.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "start",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "Start timestamp filter (ISO 8601). Defaults to 24 hours ago.",
+            },
+            {
+              name: "end",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "End timestamp filter (ISO 8601). Defaults to current time.",
+            },
+            {
+              name: "vehicleIds",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Comma-separated list of vehicle IDs to filter by.",
+            },
+            {
+              name: "groupBy",
+              in: "query",
+              required: false,
+              schema: { type: "string", enum: ["hour", "day", "week"], default: "day" },
+              description: "Time bucketing granularity for time series data.",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Fuel analytics report retrieved successfully.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/FuelAnalyticsResponse" },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid parameters or date range exceeds 90 days.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "401": {
+              description: "Unauthorized.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+            "500": {
+              description: "Internal server error.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
       "/api/v1/history": {
         get: {
           tags: ["Analytics & History"],
@@ -1662,6 +1808,61 @@ export async function GET() {
             },
           },
         },
+        DetailedOrganization: {
+          type: "object",
+          properties: {
+            id: { type: "string", example: "cm0123456789", description: "Unique CUID of the organization." },
+            name: { type: "string", example: "Acme Fleet Solutions", description: "Registered corporate name." },
+            status: {
+              type: "string",
+              enum: ["ACTIVE", "SUSPENDED", "CANCELLED"],
+              example: "ACTIVE",
+              description: "Current organizational operating status.",
+            },
+            subscriptionPlan: {
+              type: "string",
+              example: "TRIAL",
+              description: "Active subscription plan (e.g. TRIAL, STANDARD, ENTERPRISE).",
+            },
+            subscriptionEndDate: {
+              type: "string",
+              format: "date-time",
+              nullable: true,
+              example: "2026-12-31T23:59:59.000Z",
+              description: "Expiry timestamp of current subscription plan if applicable.",
+            },
+            stripeCustomerId: {
+              type: "string",
+              nullable: true,
+              example: "cus_123456789",
+              description: "Associated Stripe customer ID. Redacted for non-admin callers.",
+            },
+            apiKey: {
+              type: "string",
+              nullable: true,
+              example: "fv_live_9f8e7d6c5b4a3a2b1c...",
+              description: "Live organization API key for IoT/REST ingestion. Redacted for non-admin callers.",
+            },
+            createdAt: { type: "string", format: "date-time", example: "2026-01-01T00:00:00.000Z" },
+            updatedAt: { type: "string", format: "date-time", example: "2026-01-02T00:00:00.000Z" },
+            _count: {
+              type: "object",
+              description: "Aggregated resource statistics for this tenant.",
+              properties: {
+                users: { type: "integer", example: 5, description: "Total registered team members." },
+                devices: { type: "integer", example: 12, description: "Total tracked hardware devices (IMEIs)." },
+                vehicles: { type: "integer", example: 10, description: "Total vehicles configured in fleet." },
+                geofences: { type: "integer", example: 3, description: "Total active polygon geofence zones." },
+              },
+            },
+          },
+        },
+        OrganizationDetailsResponse: {
+          type: "object",
+          properties: {
+            organization: { $ref: "#/components/schemas/DetailedOrganization" },
+          },
+        },
         User: {
           type: "object",
           properties: {
@@ -1907,6 +2108,135 @@ export async function GET() {
                 totalTelemetryPoints: { type: "number" }
               }
             }
+          }
+        },
+        FuelAnalyticsResponse: {
+          type: "object",
+          properties: {
+            orgId: { type: "string" },
+            period: {
+              type: "object",
+              properties: {
+                start: { type: "string", format: "date-time" },
+                end: { type: "string", format: "date-time" },
+              }
+            },
+            groupBy: { type: "string" },
+            fleetFuelSummary: { $ref: "#/components/schemas/FleetFuelSummary" },
+            vehicles: {
+              type: "array",
+              items: { $ref: "#/components/schemas/VehicleFuelResult" }
+            },
+            metadata: {
+              type: "object",
+              properties: {
+                queryTimeMs: { type: "number" },
+                vehiclesQueried: { type: "number" },
+                vehiclesWithFuelData: { type: "number" },
+                totalTelemetryPoints: { type: "number" },
+                thresholds: { type: "object" }
+              }
+            }
+          }
+        },
+        FleetFuelSummary: {
+          type: "object",
+          properties: {
+            totalVehicles: { type: "number" },
+            vehiclesWithFuelData: { type: "number" },
+            vehiclesWithoutFuelData: { type: "number" },
+            totalFuelConsumedLiters: { type: "number" },
+            avgFuelConsumedPerVehicleLiters: { type: "number" },
+            fleetFuelEfficiencyKmPerL: { type: "number" },
+            fleetFuelEfficiencyL100Km: { type: "number" },
+            totalDistanceKm: { type: "number" },
+            fleetAvgCurrentFuelLiters: { type: "number" },
+            fleetAvgCurrentFuelPercent: { type: "number" },
+            lowFuelVehicleCount: { type: "number" },
+            criticalFuelVehicleCount: { type: "number" },
+            totalRefuelEvents: { type: "number" },
+            totalDrainEvents: { type: "number" },
+            totalTheftSuspectedEvents: { type: "number" },
+            fuelDistribution: { $ref: "#/components/schemas/FuelDistribution" }
+          }
+        },
+        FuelDistribution: {
+          type: "object",
+          properties: {
+            critical_0_20: { type: "number" },
+            low_20_40: { type: "number" },
+            medium_40_60: { type: "number" },
+            good_60_80: { type: "number" },
+            full_80_100: { type: "number" }
+          }
+        },
+        VehicleFuelResult: {
+          type: "object",
+          properties: {
+            vehicleId: { type: "string" },
+            plateNumber: { type: "string" },
+            imei: { type: "string" },
+            make: { type: "string", nullable: true },
+            model: { type: "string", nullable: true },
+            fuelType: { type: "string", nullable: true },
+            maxFuelCapacity: { type: "number", nullable: true },
+            summary: { $ref: "#/components/schemas/VehicleFuelSummary" },
+            fuelTimeSeries: {
+              type: "array",
+              items: { $ref: "#/components/schemas/FuelTimeBucket" }
+            },
+            events: {
+              type: "array",
+              items: { $ref: "#/components/schemas/DetectedFuelEvent" }
+            }
+          }
+        },
+        VehicleFuelSummary: {
+          type: "object",
+          properties: {
+            fuelConsumedLiters: { type: "number", nullable: true },
+            fuelEfficiencyKmPerL: { type: "number", nullable: true },
+            fuelEfficiencyL100Km: { type: "number", nullable: true },
+            totalDistanceKm: { type: "number" },
+            fuelStartLiters: { type: "number", nullable: true },
+            fuelEndLiters: { type: "number", nullable: true },
+            currentFuelPercent: { type: "number", nullable: true },
+            avgFuelLevelLiters: { type: "number", nullable: true },
+            minFuelLevelLiters: { type: "number", nullable: true },
+            maxFuelLevelLiters: { type: "number", nullable: true },
+            avgDailyConsumptionLiters: { type: "number", nullable: true },
+            estimatedRangeKm: { type: "number", nullable: true },
+            refuelEvents: { type: "number" },
+            drainEvents: { type: "number" },
+            theftSuspectedEvents: { type: "number" },
+            telemetryPoints: { type: "number" }
+          }
+        },
+        FuelTimeBucket: {
+          type: "object",
+          properties: {
+            bucket: { type: "string", format: "date-time" },
+            avgFuelLiters: { type: "number" },
+            minFuelLiters: { type: "number" },
+            maxFuelLiters: { type: "number" },
+            fuelConsumedLiters: { type: "number" },
+            distanceKm: { type: "number" },
+            efficiencyKmPerL: { type: "number" },
+            telemetryPoints: { type: "number" }
+          }
+        },
+        DetectedFuelEvent: {
+          type: "object",
+          properties: {
+            eventType: { type: "string", enum: ["REFUEL", "DRAIN", "THEFT_SUSPECTED"] },
+            startTime: { type: "string", format: "date-time" },
+            endTime: { type: "string", format: "date-time" },
+            fuelBefore: { type: "number" },
+            fuelAfter: { type: "number" },
+            deltaLiters: { type: "number" },
+            latitude: { type: "number", nullable: true },
+            longitude: { type: "number", nullable: true },
+            ignitionDuring: { type: "boolean" }
           }
         },
         HistoryResponse: {
