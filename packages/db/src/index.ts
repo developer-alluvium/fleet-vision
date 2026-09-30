@@ -28,9 +28,16 @@ export {
   getFleetStatusDetails,
   publishFleetStatusUpdate,
   getFleetDashboardPayload,
+  // Geofence Helpers
+  cacheOrgGeofences,
+  getCachedOrgGeofences,
+  invalidateGeofenceCache,
+  getDeviceGeofenceState,
+  updateDeviceGeofenceState,
+  publishGeofenceAlert,
 } from "./redis";
 
-export type { FleetDashboardPayload, DeviceStatus } from "./redis";
+export type { FleetDashboardPayload, DeviceStatus, GeofenceCacheEntry, GeofenceTransition, GeofenceAlertPayload } from "./redis";
 
 export * from "./fuelCalibration";
 

@@ -444,3 +444,112 @@ export async function publishFleetStatusUpdate(
   ]);
 }
 
+// ─── Geofence Cache Helpers ─────────────────────────────────
+
+export interface GeofenceCacheEntry {
+  id: string;
+  name: string;
+  type: string;
+  alertOnEnter: boolean;
+  alertOnExit: boolean;
+  speedLimitKmh: number | null;
+}
+
+/** Cache the list of active geofences for an org */
+export async function cacheOrgGeofences(orgId: string, geofences: GeofenceCacheEntry[]): Promise<void> {
+  await redis.setex(`geofences:org:${orgId}`, 300, JSON.stringify(geofences));
+}
+
+/** Get cached geofences, or return null */
+export async function getCachedOrgGeofences(orgId: string): Promise<GeofenceCacheEntry[] | null> {
+  const data = await redis.get(`geofences:org:${orgId}`);
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as GeofenceCacheEntry[];
+  } catch {
+    return null;
+  }
+}
+
+/** Invalidate the geofence cache for an org */
+export async function invalidateGeofenceCache(orgId: string): Promise<void> {
+  await redis.del(`geofences:org:${orgId}`);
+}
+
+// ─── Geofence State Machine ──────────────────────────────────
+
+/** Get device's current inside/outside state for all geofences */
+export async function getDeviceGeofenceState(orgId: string, imei: string): Promise<Record<string, string>> {
+  return await redis.hgetall(`geofence_state:${orgId}:${imei}`);
+}
+
+export type GeofenceTransition = {
+  geofenceId: string;
+  eventType: "ENTER" | "EXIT";
+};
+
+/** Update device's geofence state and return transitions (ENTER/EXIT events) */
+export async function updateDeviceGeofenceState(
+  orgId: string, imei: string, newState: Record<string, boolean>
+): Promise<GeofenceTransition[]> {
+  const currentState = await getDeviceGeofenceState(orgId, imei);
+  const transitions: GeofenceTransition[] = [];
+  
+  const pipeline = redis.pipeline();
+  let hasChanges = false;
+
+  for (const [geofenceId, isInside] of Object.entries(newState)) {
+    const wasInside = currentState[geofenceId] === "INSIDE";
+    
+    if (isInside && !wasInside) {
+      transitions.push({ geofenceId, eventType: "ENTER" });
+      pipeline.hset(`geofence_state:${orgId}:${imei}`, geofenceId, "INSIDE");
+      hasChanges = true;
+    } else if (!isInside && wasInside) {
+      transitions.push({ geofenceId, eventType: "EXIT" });
+      pipeline.hset(`geofence_state:${orgId}:${imei}`, geofenceId, "OUTSIDE");
+      hasChanges = true;
+    }
+  }
+
+  // If a geofence was in the old state but isn't checked in the new state,
+  // we assume it's OUTSIDE (or it was deleted). If it was INSIDE, emit EXIT.
+  for (const [geofenceId, state] of Object.entries(currentState)) {
+    if (state === "INSIDE" && newState[geofenceId] === undefined) {
+      transitions.push({ geofenceId, eventType: "EXIT" });
+      pipeline.hset(`geofence_state:${orgId}:${imei}`, geofenceId, "OUTSIDE");
+      hasChanges = true;
+    }
+  }
+
+  if (hasChanges) {
+    await pipeline.exec();
+  }
+
+  return transitions;
+}
+
+// ─── Geofence Alert Pub/Sub ──────────────────────────────────
+
+export interface GeofenceAlertPayload {
+  imei: string;
+  geofenceId: string;
+  geofenceName?: string;
+  eventType: "ENTER" | "EXIT" | "SPEED_VIOLATION";
+  latitude: number;
+  longitude: number;
+  speed: number | null;
+  speedLimit?: number | null;
+  timestamp: string;
+  dwellTimeMs?: number;
+}
+
+/** Publish a geofence alert for real-time SSE consumption */
+export async function publishGeofenceAlert(orgId: string, alert: GeofenceAlertPayload): Promise<void> {
+  const message = JSON.stringify(alert);
+  await Promise.all([
+    redis.publish(`geofence_alerts:org:${orgId}`, message),
+    redis.publish(`geofence_alerts:device:${alert.imei}`, message)
+  ]);
+}
+

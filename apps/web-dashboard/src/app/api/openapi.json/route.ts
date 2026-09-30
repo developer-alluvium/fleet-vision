@@ -51,6 +51,10 @@ export async function GET() {
         name: "Analytics & History",
         description: "Endpoints for fetching historical TimescaleDB telemetry logs, trip summaries, and distance metrics.",
       },
+      {
+        name: "Geofences",
+        description: "Endpoints for managing geofence zones, testing coordinates, and subscribing to live boundary crossing alerts.",
+      },
     ],
     paths: {
       // ─────────────────────────────────────────────────────────
@@ -1615,6 +1619,143 @@ export async function GET() {
           },
         },
       },
+      // ─────────────────────────────────────────────────────────
+      // GEOFENCES
+      // ─────────────────────────────────────────────────────────
+      "/api/v1/geofences": {
+        get: {
+          tags: ["Geofences"],
+          summary: "List Organization Geofences",
+          description: "Fetches a paginated list of geofences for the current organization.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+            { name: "limit", in: "query", schema: { type: "integer", default: 20 } },
+            { name: "search", in: "query", schema: { type: "string" } },
+            { name: "isActive", in: "query", schema: { type: "boolean" } }
+          ],
+          responses: {
+            "200": {
+              description: "List of geofences.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/GeofenceListResponse" } } }
+            }
+          }
+        },
+        post: {
+          tags: ["Geofences"],
+          summary: "Create Geofence",
+          description: "Creates a new geofence (POLYGON or CIRCLE) and enables live alert monitoring.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/CreateGeofenceRequest" } } }
+          },
+          responses: {
+            "201": {
+              description: "Geofence created.",
+              content: { "application/json": { schema: { type: "object", properties: { geofence: { $ref: "#/components/schemas/Geofence" } } } } }
+            }
+          }
+        }
+      },
+      "/api/v1/geofences/{id}": {
+        get: {
+          tags: ["Geofences"],
+          summary: "Get Geofence Details",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": {
+              description: "Geofence details.",
+              content: { "application/json": { schema: { type: "object", properties: { geofence: { $ref: "#/components/schemas/Geofence" } } } } }
+            }
+          }
+        },
+        put: {
+          tags: ["Geofences"],
+          summary: "Update Geofence",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/UpdateGeofenceRequest" } } }
+          },
+          responses: {
+            "200": {
+              description: "Geofence updated.",
+              content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" } } } } }
+            }
+          }
+        },
+        delete: {
+          tags: ["Geofences"],
+          summary: "Delete Geofence",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": {
+              description: "Geofence deleted.",
+              content: { "application/json": { schema: { type: "object", properties: { success: { type: "boolean" } } } } }
+            }
+          }
+        }
+      },
+      "/api/v1/geofences/{id}/test": {
+        post: {
+          tags: ["Geofences"],
+          summary: "Test Point Against Geofence",
+          description: "Tests whether a specific coordinate falls inside a geofence and returns the exact distance.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", properties: { latitude: { type: "number" }, longitude: { type: "number" } }, required: ["latitude", "longitude"] } } }
+          },
+          responses: {
+            "200": {
+              description: "Test result.",
+              content: { "application/json": { schema: { type: "object", properties: { inside: { type: "boolean" }, distanceMeters: { type: "number" } } } } }
+            }
+          }
+        }
+      },
+      "/api/v1/geofences/stream": {
+        get: {
+          tags: ["Geofences"],
+          summary: "Geofence Real-Time Alert Stream",
+          description: "SSE endpoint streaming live geofence entrance, exit, and speed violation events for the entire organization.",
+          security: [{ bearerAuth: [] }, { cookieAuth: [] }],
+          responses: {
+            "200": {
+              description: "Server-Sent Events stream of GeofenceAlert objects.",
+              content: { "text/event-stream": { schema: { type: "string" } } }
+            }
+          }
+        }
+      },
+      "/api/v1/geofences/alerts": {
+        get: {
+          tags: ["Geofences"],
+          summary: "List Geofence Alert History",
+          description: "Fetches a paginated history of geofence crossing alerts.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+            { name: "limit", in: "query", schema: { type: "integer", default: 50 } },
+            { name: "geofenceId", in: "query", schema: { type: "string" } },
+            { name: "imei", in: "query", schema: { type: "string" } },
+            { name: "eventType", in: "query", schema: { type: "string", enum: ["ENTER", "EXIT", "SPEED_VIOLATION"] } },
+            { name: "from", in: "query", schema: { type: "string", format: "date-time" } },
+            { name: "to", in: "query", schema: { type: "string", format: "date-time" } }
+          ],
+          responses: {
+            "200": {
+              description: "List of alerts.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/GeofenceAlertListResponse" } } }
+            }
+          }
+        }
+      }
     },
     components: {
       securitySchemes: {
@@ -2260,6 +2401,84 @@ export async function GET() {
             },
           },
         },
+        Geofence: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            description: { type: "string", nullable: true },
+            type: { type: "string", enum: ["POLYGON", "CIRCLE"] },
+            color: { type: "string" },
+            isActive: { type: "boolean" },
+            alertOnEnter: { type: "boolean" },
+            alertOnExit: { type: "boolean" },
+            speedLimitKmh: { type: "number", nullable: true },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+            centerLat: { type: "number", nullable: true },
+            centerLng: { type: "number", nullable: true },
+            radiusMeters: { type: "number", nullable: true },
+            coordinates: { type: "array", items: { type: "array", items: { type: "number" } }, nullable: true }
+          }
+        },
+        GeofenceListResponse: {
+          type: "object",
+          properties: {
+            geofences: { type: "array", items: { $ref: "#/components/schemas/Geofence" } },
+            totalCount: { type: "integer" }
+          }
+        },
+        CreateGeofenceRequest: {
+          type: "object",
+          required: ["name", "type"],
+          properties: {
+            name: { type: "string" },
+            description: { type: "string" },
+            type: { type: "string", enum: ["POLYGON", "CIRCLE"] },
+            color: { type: "string" },
+            alertOnEnter: { type: "boolean" },
+            alertOnExit: { type: "boolean" },
+            speedLimitKmh: { type: "number" },
+            coordinates: { type: "array", items: { type: "array", items: { type: "number" } } },
+            center: { type: "object", properties: { lat: { type: "number" }, lng: { type: "number" } } },
+            radiusMeters: { type: "number" }
+          }
+        },
+        UpdateGeofenceRequest: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            description: { type: "string" },
+            color: { type: "string" },
+            isActive: { type: "boolean" },
+            alertOnEnter: { type: "boolean" },
+            alertOnExit: { type: "boolean" },
+            speedLimitKmh: { type: "number" }
+          }
+        },
+        GeofenceAlert: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            geofenceId: { type: "string" },
+            organizationId: { type: "string" },
+            imei: { type: "string" },
+            eventType: { type: "string", enum: ["ENTER", "EXIT", "SPEED_VIOLATION"] },
+            latitude: { type: "number" },
+            longitude: { type: "number" },
+            speed: { type: "number", nullable: true },
+            timestamp: { type: "string", format: "date-time" },
+            createdAt: { type: "string", format: "date-time" },
+            geofence: { type: "object", properties: { name: { type: "string" }, type: { type: "string" } } }
+          }
+        },
+        GeofenceAlertListResponse: {
+          type: "object",
+          properties: {
+            alerts: { type: "array", items: { $ref: "#/components/schemas/GeofenceAlert" } },
+            totalCount: { type: "integer" }
+          }
+        }
       },
     },
   };

@@ -122,14 +122,54 @@ model Geofence {
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  description    String?
+  type           String       @default("POLYGON")  // POLYGON, CIRCLE
+  color          String       @default("#3B82F6")   // Hex color for frontend rendering
+  isActive       Boolean      @default(true) @map("is_active")
+
+  // Circle support (center + radius stored alongside polygon for fast distance checks)
+  centerLat      Float?       @map("center_lat")
+  centerLng      Float?       @map("center_lng")
+  radiusMeters   Float?       @map("radius_meters")
+
+  // Alert configuration
+  alertOnEnter   Boolean      @default(true) @map("alert_on_enter")
+  alertOnExit    Boolean      @default(true) @map("alert_on_exit")
+  speedLimitKmh  Float?       @map("speed_limit_kmh")
+
+  alerts         GeofenceAlert[]
+
   /// PostGIS Polygon + GiST Index for high-performance spatial queries
   polygon Unsupported("geometry(Polygon, 4326)")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@unique([organizationId, name])
   @@index([polygon], type: Gist)
   @@map("geofences")
+}
+
+/// A geofence alert log.
+model GeofenceAlert {
+  id             String   @id @default(cuid())
+  geofenceId     String   @map("geofence_id")
+  geofence       Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  organizationId String   @map("organization_id")
+  imei           String
+  eventType      String   // ENTER, EXIT, SPEED_VIOLATION
+  latitude       Float
+  longitude      Float
+  speed          Float?
+  timestamp      DateTime @db.Timestamptz  // Device timestamp
+  resolvedAt     DateTime? @map("resolved_at")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([imei, createdAt(sort: Desc)])
+  @@index([geofenceId, createdAt(sort: Desc)])
+  @@map("geofence_alerts")
 }
 
 /// A single telemetry data point received from a device.
