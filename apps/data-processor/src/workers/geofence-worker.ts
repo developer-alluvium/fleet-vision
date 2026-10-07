@@ -149,6 +149,7 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
             (transition.eventType === "EXIT" && fence.alertOnExit)) {
           
           const alert = {
+            category: "GEOFENCE",
             geofenceId: fence.id,
             organizationId: orgId,
             imei: point.imei,
@@ -175,6 +176,7 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
         const fence = fenceDict[fenceId];
         if (fence && fence.speedLimitKmh && point.speed != null && point.speed > fence.speedLimitKmh) {
           const alert = {
+            category: "GEOFENCE",
             geofenceId: fence.id,
             organizationId: orgId,
             imei: point.imei,
@@ -199,7 +201,7 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
 
     // 5. Bulk insert alerts
     if (alertsToCreate.length > 0) {
-      await prisma.geofenceAlert.createMany({
+      await prisma.alert.createMany({
         data: alertsToCreate
       });
       console.log(`[GEOFENCE] Created ${alertsToCreate.length} alerts for org ${orgId}`);

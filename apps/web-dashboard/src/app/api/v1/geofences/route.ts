@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     }, { status: 201 });
   } catch (error: any) {
     console.error("[API] POST /api/v1/geofences error:", error);
-    if (error.code === 'P2002') {
+    if (error.code === 'P2002' || (error.code === 'P2010' && (error.message?.includes('23505') || error.message?.includes('already exists')))) {
       return NextResponse.json({ 
         success: false, 
         message: "Geofence with this name already exists", 

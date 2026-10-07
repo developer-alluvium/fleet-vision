@@ -53,7 +53,11 @@ export async function GET() {
       },
       {
         name: "Geofences",
-        description: "Endpoints for managing geofence zones, testing coordinates, and subscribing to live boundary crossing alerts.",
+        description: "Endpoints for managing geofence zones, testing coordinates, and querying alert history.",
+      },
+      {
+        name: "Alerts",
+        description: "Real-time alert streaming via Server-Sent Events. Supports multiple alert categories including geofence boundary crossings, speed violations, and more.",
       },
     ],
     paths: {
@@ -1719,16 +1723,32 @@ export async function GET() {
           }
         }
       },
-      "/api/v1/geofences/stream": {
+      "/api/v1/alerts/stream": {
         get: {
-          tags: ["Geofences"],
-          summary: "Geofence Real-Time Alert Stream",
-          description: "SSE endpoint streaming live geofence entrance, exit, and speed violation events for the entire organization.",
+          tags: ["Alerts"],
+          summary: "Real-Time Alert Stream (SSE)",
+          description:
+            "Server-Sent Events endpoint streaming live alerts for the entire organization. " +
+            "Currently supports **geofence alerts** (`geofence:enter`, `geofence:exit`, `geofence:speed`). " +
+            "Additional alert categories (maintenance, SOS, tampering, etc.) will be added to this same stream in the future.\n\n" +
+            "### SSE Event Format\n" +
+            "Each event includes a `category` field to distinguish alert types:\n" +
+            "```\nevent: geofence:enter\ndata: {\"category\":\"geofence\", \"imei\":\"...\", \"geofenceId\":\"...\", ...}\n```\n\n" +
+            "### Event Types\n" +
+            "| Event Name | Category | Description |\n" +
+            "|---|---|---|\n" +
+            "| `geofence:enter` | geofence | Vehicle entered a geofence zone |\n" +
+            "| `geofence:exit` | geofence | Vehicle exited a geofence zone |\n" +
+            "| `geofence:speed` | geofence | Speed limit violated inside a geofence |\n",
           security: [{ bearerAuth: [] }, { cookieAuth: [] }],
           responses: {
             "200": {
-              description: "Server-Sent Events stream of GeofenceAlert objects.",
-              content: { "text/event-stream": { schema: { type: "string" } } }
+              description: "Server-Sent Events stream of alert objects.",
+              content: { "text/event-stream": { schema: { type: "string", description: "SSE stream with events prefixed by category (e.g. geofence:enter, geofence:exit, geofence:speed)" } } }
+            },
+            "401": {
+              description: "Unauthorized - Invalid or missing authentication.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
             }
           }
         }

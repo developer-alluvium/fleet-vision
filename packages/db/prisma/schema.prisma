@@ -89,8 +89,8 @@ model Vehicle {
   device          Device?
 
   // ── BLE Fuel Sensor ─────────────────────────────────────
-  bleFuelChannel               Int?     @default(1) @map("ble_fuel_channel") // 1–4 (which BLE sensor)
-  calibrationPoints            FuelCalibrationPoint[]
+  bleFuelChannel    Int?                   @default(1) @map("ble_fuel_channel") // 1–4 (which BLE sensor)
+  calibrationPoints FuelCalibrationPoint[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -105,12 +105,12 @@ model FuelCalibrationPoint {
   vehicleId String  @map("vehicle_id")
   vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
-  rawValue  Int     @map("raw_value")    // Escort TD-BLE raw Hz/CNT reading
-  liters    Float                         // Known fuel volume at this reading
+  rawValue Int   @map("raw_value") // Escort TD-BLE raw Hz/CNT reading
+  liters   Float // Known fuel volume at this reading
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@unique([vehicleId, rawValue])          // No duplicate raw values per vehicle
+  @@unique([vehicleId, rawValue]) // No duplicate raw values per vehicle
   @@index([vehicleId])
   @@map("fuel_calibration_points")
 }
@@ -122,22 +122,23 @@ model Geofence {
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  description    String?
-  type           String       @default("POLYGON")  // POLYGON, CIRCLE
-  color          String       @default("#3B82F6")   // Hex color for frontend rendering
-  isActive       Boolean      @default(true) @map("is_active")
+  description String?
+  type        String  @default("POLYGON") // POLYGON, CIRCLE
+  color       String  @default("#3B82F6") // Hex color for frontend rendering
+  isActive    Boolean @default(true) @map("is_active")
 
   // Circle support (center + radius stored alongside polygon for fast distance checks)
-  centerLat      Float?       @map("center_lat")
-  centerLng      Float?       @map("center_lng")
-  radiusMeters   Float?       @map("radius_meters")
+  centerLat    Float? @map("center_lat")
+  centerLng    Float? @map("center_lng")
+  radiusMeters Float? @map("radius_meters")
 
   // Alert configuration
-  alertOnEnter   Boolean      @default(true) @map("alert_on_enter")
-  alertOnExit    Boolean      @default(true) @map("alert_on_exit")
-  speedLimitKmh  Float?       @map("speed_limit_kmh")
+  alertOnEnter  Boolean @default(true) @map("alert_on_enter")
+  alertOnExit   Boolean @default(true) @map("alert_on_exit")
+  speedLimitKmh Float?  @map("speed_limit_kmh")
 
-  alerts         GeofenceAlert[]
+  // Geofence relation for alerts where category = "GEOFENCE"
+  alerts Alert[]
 
   /// PostGIS Polygon + GiST Index for high-performance spatial queries
   polygon Unsupported("geometry(Polygon, 4326)")
@@ -150,41 +151,51 @@ model Geofence {
   @@map("geofences")
 }
 
-/// A geofence alert log.
-model GeofenceAlert {
-  id             String   @id @default(cuid())
-  geofenceId     String   @map("geofence_id")
-  geofence       Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
-  organizationId String   @map("organization_id")
+/// A generic alert log for the fleet.
+model Alert {
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
   imei           String
-  eventType      String   // ENTER, EXIT, SPEED_VIOLATION
-  latitude       Float
-  longitude      Float
-  speed          Float?
-  timestamp      DateTime @db.Timestamptz  // Device timestamp
-  resolvedAt     DateTime? @map("resolved_at")
 
-  createdAt      DateTime @default(now()) @map("created_at")
+  category  String // "GEOFENCE", "MAINTENANCE", "SOS", "TAMPERING", etc.
+  eventType String // Specific event: "ENTER", "EXIT", "SPEED_VIOLATION", "TRIGGERED", etc.
+
+  // Specific data regarding the alert. For geofences, we maintain this relation
+  geofenceId String?   @map("geofence_id")
+  geofence   Geofence? @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+
+  // Generic telemetry snapshot at the time of the alert
+  latitude  Float?
+  longitude Float?
+  speed     Float?
+
+  // Flexible metadata block to store any other alert-specific details
+  metadata Json?
+
+  timestamp  DateTime  @db.Timestamptz // Device timestamp
+  resolvedAt DateTime? @map("resolved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([imei, createdAt(sort: Desc)])
-  @@index([geofenceId, createdAt(sort: Desc)])
-  @@map("geofence_alerts")
+  @@index([category, createdAt(sort: Desc)])
+  @@map("alerts")
 }
 
 /// A single telemetry data point received from a device.
 /// This table is converted to a TimescaleDB Hypertable keyed on `time`.
 model TelemetryRecord {
-  id              String   @default(cuid())
-  time            DateTime @default(now()) @db.Timestamptz
-  imei            String
-  organizationId  String   @map("organization_id")
-  latitude        Float?
-  longitude       Float?
-  speed           Float?
-  angle           Float?
-  ignition               Boolean  @default(false)
-  
+  id             String   @default(cuid())
+  time           DateTime @default(now()) @db.Timestamptz
+  imei           String
+  organizationId String   @map("organization_id")
+  latitude       Float?
+  longitude      Float?
+  speed          Float?
+  angle          Float?
+  ignition       Boolean  @default(false)
+
   // Extracted IO Elements
   gsmSignal              Int?     @map("gsm_signal")
   externalVoltage        Int?     @map("external_voltage")
@@ -196,10 +207,10 @@ model TelemetryRecord {
   tripOdometer           Float?   @map("trip_odometer")
 
   // ── BLE Fuel Sensor Data ──────────────────────────────
-  fuelLevelRaw           Int?     @map("fuel_level_raw")         // IO 270/273/276/279 raw value
-  fuelLevelLiters        Float?   @map("fuel_level_liters")      // Interpolated volume
+  fuelLevelRaw    Int?   @map("fuel_level_raw") // IO 270/273/276/279 raw value
+  fuelLevelLiters Float? @map("fuel_level_liters") // Interpolated volume
 
-  serverCreatedAt        DateTime @default(now()) @map("server_created_at") @db.Timestamptz
+  serverCreatedAt DateTime @default(now()) @map("server_created_at") @db.Timestamptz
 
   @@id([id, time])
   @@index([time(sort: Desc)])

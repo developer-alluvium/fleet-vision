@@ -17,7 +17,10 @@ export async function GET(request: NextRequest) {
 
     const skip = (page - 1) * limit;
     
-    const where: any = { organizationId: auth.organizationId };
+    const where: any = { 
+      organizationId: auth.organizationId,
+      category: "GEOFENCE"
+    };
     
     if (geofenceId) where.geofenceId = geofenceId;
     if (imei) where.imei = imei;
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [alerts, totalCount] = await Promise.all([
-      prisma.geofenceAlert.findMany({
+      prisma.alert.findMany({
         where,
         orderBy: { createdAt: "desc" },
         skip,
@@ -39,7 +42,7 @@ export async function GET(request: NextRequest) {
           geofence: { select: { name: true, type: true } }
         }
       }),
-      prisma.geofenceAlert.count({ where })
+      prisma.alert.count({ where })
     ]);
 
     return NextResponse.json({ alerts, totalCount });
