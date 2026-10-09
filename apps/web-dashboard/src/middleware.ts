@@ -12,7 +12,7 @@ const ALLOWED_ORIGINS = [
 
 function getCorsHeaders(origin: string | null) {
   const headers: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
     "Access-Control-Allow-Credentials": "true",
   };

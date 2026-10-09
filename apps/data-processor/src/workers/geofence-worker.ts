@@ -5,7 +5,11 @@ import {
   updateDeviceGeofenceState,
   publishGeofenceAlert,
   GeofenceCacheEntry,
+  getGeofenceSpeedEpisodeState,
+  setGeofenceSpeedEpisodeState,
+  deleteGeofenceSpeedEpisodeState,
 } from "@fleet-vision/db";
+import { processSpeedPing, SpeedEpisodeConfig } from "./speed-episode-engine";
 
 // Types matching the parsed valid records
 type TelemetryPoint = {
@@ -76,7 +80,11 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
     if (!activeGeofences) {
       const dbGeofences = await prisma.geofence.findMany({
         where: { organizationId: orgId, isActive: true },
-        select: { id: true, name: true, type: true, alertOnEnter: true, alertOnExit: true, speedLimitKmh: true },
+        select: { 
+          id: true, name: true, type: true, alertOnEnter: true, alertOnExit: true, speedLimitKmh: true,
+          speedMinPings: true, speedMinDurationSec: true, speedHysteresisKmh: true, speedEndPings: true,
+          speedRenotifyMin: true, speedSeverityConfig: true
+        },
       });
       activeGeofences = dbGeofences;
       await cacheOrgGeofences(orgId, activeGeofences);
@@ -145,6 +153,32 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
         const fence = fenceDict[transition.geofenceId];
         if (!fence) continue;
 
+        if (transition.eventType === "EXIT" && fence.speedLimitKmh) {
+          // Attempt to close open episode on exit
+          const episodeState = await getGeofenceSpeedEpisodeState(point.imei, fence.id);
+          if (episodeState && episodeState.status === "SPEEDING" && episodeState.episodeId) {
+            const durationSec = episodeState.episodeStartTs
+              ? (point.time.getTime() - new Date(episodeState.episodeStartTs).getTime()) / 1000
+              : 0;
+            const avgSpeed = episodeState.pingCount > 0 ? episodeState.speedSum / episodeState.pingCount : 0;
+            
+            await prisma.geofenceViolationEpisode.updateMany({
+              where: { id: episodeState.episodeId },
+              data: {
+                status: "CLOSED",
+                endedAt: point.time,
+                durationSec: Math.round(durationSec),
+                peakSpeedKmh: episodeState.peakSpeed,
+                avgSpeedKmh: avgSpeed,
+                closeReason: "EXIT"
+              }
+            });
+            await deleteGeofenceSpeedEpisodeState(point.imei, fence.id);
+          } else if (episodeState) {
+            await deleteGeofenceSpeedEpisodeState(point.imei, fence.id);
+          }
+        }
+
         if ((transition.eventType === "ENTER" && fence.alertOnEnter) || 
             (transition.eventType === "EXIT" && fence.alertOnExit)) {
           
@@ -167,34 +201,138 @@ async function processGeofencesForOrg(orgId: string, latestPoints: TelemetryPoin
             ...alert,
             geofenceName: fence.name,
             timestamp: alert.timestamp.toISOString(),
-          });
+          } as any);
         }
       }
 
-      // Handle Speed Violations (if inside and exceeding limit)
+      // Handle Speed Violations via Episode Engine
       for (const fenceId of insideSet) {
         const fence = fenceDict[fenceId];
-        if (fence && fence.speedLimitKmh && point.speed != null && point.speed > fence.speedLimitKmh) {
-          const alert = {
-            category: "GEOFENCE",
-            geofenceId: fence.id,
-            organizationId: orgId,
-            imei: point.imei,
-            eventType: "SPEED_VIOLATION",
-            latitude: point.latitude!,
-            longitude: point.longitude!,
-            speed: point.speed,
-            timestamp: point.time,
+        if (fence && fence.speedLimitKmh && point.speed != null) {
+          const config: SpeedEpisodeConfig = {
+            speedLimitKmh: fence.speedLimitKmh,
+            minPings: fence.speedMinPings ?? 2,
+            minDurationSec: fence.speedMinDurationSec ?? 10,
+            hysteresisKmh: fence.speedHysteresisKmh ?? 3,
+            endPings: fence.speedEndPings ?? 2,
+            renotifyIntervalMin: fence.speedRenotifyMin ?? 5,
+            severityThresholds: fence.speedSeverityConfig ? (fence.speedSeverityConfig as any) : { minor: 1.2, major: 1.5 },
           };
-          
-          alertsToCreate.push(alert);
-          
-          await publishGeofenceAlert(orgId, {
-            ...alert,
-            geofenceName: fence.name,
-            speedLimit: fence.speedLimitKmh,
-            timestamp: alert.timestamp.toISOString(),
-          });
+
+          const currentState = await getGeofenceSpeedEpisodeState(point.imei, fence.id);
+          const { newState, events, suppressNotification } = processSpeedPing(
+            currentState, 
+            { speed: point.speed, lat: point.latitude!, lng: point.longitude!, timestamp: point.time.toISOString() },
+            config
+          );
+
+          await setGeofenceSpeedEpisodeState(point.imei, fence.id, newState);
+
+          for (const ev of events) {
+            if (ev.type === "ViolationStarted" && !suppressNotification) {
+              await prisma.geofenceViolationEpisode.upsert({
+                where: {
+                   imei_geofenceId_startedAt: {
+                     imei: point.imei,
+                     geofenceId: fence.id,
+                     startedAt: new Date(newState.episodeStartTs!)
+                   }
+                },
+                create: {
+                  id: ev.episodeId,
+                  organizationId: orgId,
+                  imei: point.imei,
+                  geofenceId: fence.id,
+                  status: "OPEN",
+                  startedAt: new Date(newState.episodeStartTs!),
+                  limitKmh: config.speedLimitKmh,
+                  peakSpeedKmh: newState.peakSpeed,
+                  startLat: newState.peakLat,
+                  startLng: newState.peakLng,
+                  peakLat: newState.peakLat,
+                  peakLng: newState.peakLng,
+                  severity: newState.severity,
+                  pingCount: 1,
+                  notifiedCount: 1,
+                  lastNotifiedAt: point.time,
+                },
+                update: {
+                  peakSpeedKmh: newState.peakSpeed,
+                  severity: newState.severity,
+                }
+              });
+
+              await publishGeofenceAlert(orgId, {
+                imei: point.imei,
+                geofenceId: fence.id,
+                geofenceName: fence.name,
+                eventType: "SPEED_VIOLATION",
+                latitude: point.latitude!,
+                longitude: point.longitude!,
+                speed: point.speed,
+                speedLimit: fence.speedLimitKmh,
+                timestamp: point.time.toISOString(),
+              });
+
+            } else if (ev.type === "ViolationEscalated" && newState.episodeId && !suppressNotification) {
+              await prisma.geofenceViolationEpisode.updateMany({
+                where: { id: newState.episodeId },
+                data: {
+                  peakSpeedKmh: newState.peakSpeed,
+                  peakLat: newState.peakLat,
+                  peakLng: newState.peakLng,
+                  severity: newState.severity,
+                  pingCount: newState.pingCount,
+                  lastNotifiedAt: point.time,
+                  notifiedCount: { increment: 1 }
+                }
+              });
+              await publishGeofenceAlert(orgId, {
+                imei: point.imei,
+                geofenceId: fence.id,
+                geofenceName: fence.name,
+                eventType: "SPEED_VIOLATION",
+                latitude: point.latitude!,
+                longitude: point.longitude!,
+                speed: point.speed,
+                speedLimit: fence.speedLimitKmh,
+                timestamp: point.time.toISOString(),
+              });
+            } else if (ev.type === "ViolationReminder" && newState.episodeId && !suppressNotification) {
+              await prisma.geofenceViolationEpisode.updateMany({
+                where: { id: newState.episodeId },
+                data: {
+                  pingCount: newState.pingCount,
+                  lastNotifiedAt: point.time,
+                  notifiedCount: { increment: 1 }
+                }
+              });
+              await publishGeofenceAlert(orgId, {
+                imei: point.imei,
+                geofenceId: fence.id,
+                geofenceName: fence.name,
+                eventType: "SPEED_VIOLATION",
+                latitude: point.latitude!,
+                longitude: point.longitude!,
+                speed: point.speed,
+                speedLimit: fence.speedLimitKmh,
+                timestamp: point.time.toISOString(),
+              });
+            } else if (ev.type === "ViolationEnded" && newState.episodeId) {
+              await prisma.geofenceViolationEpisode.updateMany({
+                where: { id: newState.episodeId },
+                data: {
+                  status: "CLOSED",
+                  endedAt: point.time,
+                  durationSec: ev.durationSec,
+                  peakSpeedKmh: ev.peakSpeed,
+                  avgSpeedKmh: ev.avgSpeed,
+                  closeReason: ev.closeReason,
+                  pingCount: newState.pingCount,
+                }
+              });
+            }
+          }
         }
       }
     }

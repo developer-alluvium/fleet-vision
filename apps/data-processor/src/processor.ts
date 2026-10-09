@@ -1,6 +1,7 @@
 import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings, getCachedCalibrationTable, rawToLiters } from "@fleet-vision/db";
 import { recomputeFleetStatus } from "./workers/fleet-status";
 import { batchCheckGeofencesForOrgs } from "./workers/geofence-worker";
+import { batchCheckSpeedAlerts } from "./workers/speed-worker";
 
 // ─── Types matching the Go TCP gateway's JSON output ─────────
 
@@ -311,4 +312,7 @@ export async function processTelemetryBatch(
 
   // ── 8. Check Geofences for affected orgs ──
   await batchCheckGeofencesForOrgs(affectedOrgIds, validRecords);
+
+  // ── 9. Check Speed Alerts ──
+  await batchCheckSpeedAlerts(validRecords);
 }

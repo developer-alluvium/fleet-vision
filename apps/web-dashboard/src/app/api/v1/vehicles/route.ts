@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
       status,
       fuelType,
       maxFuelCapacity,
+      speedLimitKmh,
       orgId,
     } = body || {};
 
@@ -124,6 +125,7 @@ export async function POST(request: NextRequest) {
         vin: vin && typeof vin === "string" && vin.trim().length > 0 ? vin.trim() : null,
         vehicleType: vehicleType && typeof vehicleType === "string" ? vehicleType.trim() : null,
         status: status && typeof status === "string" ? status.trim() : "ACTIVE",
+        speedLimitKmh: speedLimitKmh ? (typeof speedLimitKmh === "number" ? speedLimitKmh : parseFloat(speedLimitKmh)) : null,
         fuelType: fuelType && typeof fuelType === "string" ? fuelType.trim() : null,
         maxFuelCapacity: isNaN(parsedMaxFuel as number) ? null : parsedMaxFuel,
         organizationId: targetOrgId,

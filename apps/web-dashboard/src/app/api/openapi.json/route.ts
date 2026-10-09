@@ -468,6 +468,58 @@ export async function GET() {
             },
           },
         },
+        patch: {
+          tags: ["Organizations"],
+          summary: "Update Organization Settings",
+          description: "Update settings such as the global speed limit for the organization.",
+          security: [
+            { bearerAuth: [] },
+            { apiKeyAuth: [] },
+            { cookieAuth: [] },
+          ],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              description: "The unique identifier (`cuid`) of the organization.",
+              schema: {
+                type: "string",
+              },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    globalSpeedLimitKmh: { type: "number", example: 100 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Organization settings updated successfully.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      organization: { $ref: "#/components/schemas/Organization" },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Invalid request payload." },
+            "401": { description: "Unauthorized." },
+            "403": { description: "Forbidden - Admin privileges required." },
+          },
+        },
       },
 
       // ─────────────────────────────────────────────────────────
@@ -616,6 +668,53 @@ export async function GET() {
                 },
               },
             },
+          },
+        },
+      },
+      "/api/v1/vehicles/{vehicleId}": {
+        patch: {
+          tags: ["Vehicles"],
+          summary: "Update Vehicle Properties",
+          description: "Updates properties for a specific vehicle, such as overriding the speed limit.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "vehicleId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    speedLimitKmh: { type: "number", nullable: true, example: 80 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Vehicle updated successfully.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      vehicle: { $ref: "#/components/schemas/Vehicle" },
+                    },
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized." },
+            "403": { description: "Forbidden." },
+            "404": { description: "Vehicle not found." },
           },
         },
       },
@@ -1775,6 +1874,130 @@ export async function GET() {
             }
           }
         }
+      },
+      "/api/v1/alerts": {
+        get: {
+          tags: ["Alerts"],
+          summary: "Get Historical Alerts",
+          description: "Fetches historical alerts for the organization.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "page",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 1 },
+            },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 20 },
+            },
+            {
+              name: "category",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Filter by category (e.g., 'SPEED', 'GEOFENCE')",
+            },
+            {
+              name: "eventType",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Filter by eventType (e.g., 'ENTER', 'EXIT')",
+            },
+            {
+              name: "geofenceId",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Filter by geofence ID",
+            },
+            {
+              name: "imei",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Filter by specific device IMEI",
+            },
+            {
+              name: "vehicleId",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Filter by specific vehicle ID",
+            },
+            {
+              name: "from",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "Start date for timestamp filtering",
+            },
+            {
+              name: "to",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date-time" },
+              description: "End date for timestamp filtering",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Historical alerts retrieved successfully.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      alerts: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            category: { type: "string" },
+                            eventType: { type: "string" },
+                            imei: { type: "string" },
+                            speed: { type: "number", nullable: true },
+                            metadata: { type: "object" },
+                            timestamp: { type: "string", format: "date-time" },
+                            device: {
+                              type: "object",
+                              nullable: true,
+                              properties: {
+                                id: { type: "string" },
+                                imei: { type: "string" },
+                                vehicle: {
+                                  type: "object",
+                                  nullable: true,
+                                  properties: {
+                                    id: { type: "string" },
+                                    plateNumber: { type: "string" },
+                                    make: { type: "string", nullable: true },
+                                    model: { type: "string", nullable: true },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                      totalCount: { type: "integer" },
+                      totalPages: { type: "integer" },
+                      page: { type: "integer" },
+                      limit: { type: "integer" },
+                    },
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized." },
+            "500": { description: "Internal server error." },
+          },
+        },
       }
     },
     components: {

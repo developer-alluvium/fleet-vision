@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     // Add new alert channels here as you introduce more alert types
     const channels = [
       `geofence_alerts:org:${auth.organizationId}`,
+      `speed_alerts:org:${auth.organizationId}`,
       // `maintenance_alerts:org:${auth.organizationId}`,
       // `sos_alerts:org:${auth.organizationId}`,
       // `tampering_alerts:org:${auth.organizationId}`,
@@ -80,6 +81,19 @@ export async function GET(request: NextRequest) {
 
               const payload = {
                 category: "GEOFENCE",
+                ...parsed,
+              };
+
+              const ssePayload = `event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`;
+              controller.enqueue(new TextEncoder().encode(ssePayload));
+            } else if (ch === `speed_alerts:org:${auth.organizationId}`) {
+              // Speed alerts -> speed:overspeed, speed:resolved
+              let eventType = "speed:alert";
+              if (parsed.eventType === "OVERSPEED") eventType = "speed:overspeed";
+              else if (parsed.eventType === "RESOLVED") eventType = "speed:resolved";
+
+              const payload = {
+                category: "SPEED",
                 ...parsed,
               };
 

@@ -35,9 +35,17 @@ export {
   getDeviceGeofenceState,
   updateDeviceGeofenceState,
   publishGeofenceAlert,
+  // Geofence Speed Episode State
+  getGeofenceSpeedEpisodeState,
+  setGeofenceSpeedEpisodeState,
+  deleteGeofenceSpeedEpisodeState,
+  // Speed Helpers
+  getDeviceSpeedState,
+  checkAndSetSpeedState,
+  publishSpeedAlert,
 } from "./redis";
 
-export type { FleetDashboardPayload, DeviceStatus, GeofenceCacheEntry, GeofenceTransition, GeofenceAlertPayload } from "./redis";
+export type { FleetDashboardPayload, DeviceStatus, GeofenceCacheEntry, GeofenceTransition, GeofenceAlertPayload, SpeedAlertPayload } from "./redis";
 
 export * from "./fuelCalibration";
 

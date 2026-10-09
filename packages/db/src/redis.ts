@@ -453,6 +453,12 @@ export interface GeofenceCacheEntry {
   alertOnEnter: boolean;
   alertOnExit: boolean;
   speedLimitKmh: number | null;
+  speedMinPings: number | null;
+  speedMinDurationSec: number | null;
+  speedHysteresisKmh: number | null;
+  speedEndPings: number | null;
+  speedRenotifyMin: number | null;
+  speedSeverityConfig: any | null;
 }
 
 /** Cache the list of active geofences for an org */
@@ -551,5 +557,80 @@ export async function publishGeofenceAlert(orgId: string, alert: GeofenceAlertPa
     redis.publish(`geofence_alerts:org:${orgId}`, message),
     redis.publish(`geofence_alerts:device:${alert.imei}`, message)
   ]);
+}
+
+// ─── Speed Alert Pub/Sub & State ──────────────────────────────
+
+export interface SpeedAlertPayload {
+  imei: string;
+  eventType: "OVERSPEED" | "RESOLVED";
+  latitude: number;
+  longitude: number;
+  speed: number;
+  speedLimit: number;
+  timestamp: string;
+}
+
+/** Get device's current speeding state */
+export async function getDeviceSpeedState(orgId: string, imei: string): Promise<boolean> {
+  const state = await redis.get(`speed_state:${orgId}:${imei}`);
+  return state === "SPEEDING";
+}
+
+/** 
+ * Update device's speed state. 
+ * Returns true if the state transitioned to "SPEEDING" (so an alert should be fired).
+ * Returns false otherwise (already speeding, or not speeding).
+ */
+export async function checkAndSetSpeedState(
+  orgId: string, 
+  imei: string, 
+  isSpeeding: boolean
+): Promise<"OVERSPEED" | "RESOLVED" | null> {
+  const wasSpeeding = await getDeviceSpeedState(orgId, imei);
+  
+  if (isSpeeding && !wasSpeeding) {
+    await redis.set(`speed_state:${orgId}:${imei}`, "SPEEDING");
+    return "OVERSPEED";
+  } else if (!isSpeeding && wasSpeeding) {
+    await redis.set(`speed_state:${orgId}:${imei}`, "NORMAL");
+    return "RESOLVED";
+  }
+  
+  return null;
+}
+
+
+/** Publish a speed alert for real-time SSE consumption */
+export async function publishSpeedAlert(orgId: string, alert: SpeedAlertPayload): Promise<void> {
+  const message = JSON.stringify(alert);
+  await Promise.all([
+    redis.publish(`speed_alerts:org:${orgId}`, message),
+    redis.publish(`speed_alerts:device:${alert.imei}`, message)
+  ]);
+}
+
+// ─── Geofence Speed Episode State ─────────────────────────────
+
+export async function getGeofenceSpeedEpisodeState(imei: string, geofenceId: string): Promise<any | null> {
+  const data = await redis.get(`geofence:speed:${imei}:${geofenceId}`);
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+export async function setGeofenceSpeedEpisodeState(imei: string, geofenceId: string, state: any): Promise<void> {
+  const pipeline = redis.pipeline();
+  const key = `geofence:speed:${imei}:${geofenceId}`;
+  pipeline.set(key, JSON.stringify(state));
+  pipeline.expire(key, 24 * 60 * 60); // 24 hours TTL
+  await pipeline.exec();
+}
+
+export async function deleteGeofenceSpeedEpisodeState(imei: string, geofenceId: string): Promise<void> {
+  await redis.del(`geofence:speed:${imei}:${geofenceId}`);
 }
 

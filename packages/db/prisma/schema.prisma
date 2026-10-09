@@ -26,6 +26,7 @@ model Organization {
   subscriptionEndDate DateTime? @map("subscription_end_date")
   stripeCustomerId    String?   @map("stripe_customer_id")
   apiKey              String?   @unique @map("api_key")
+  globalSpeedLimitKmh Float?    @default(100) @map("global_speed_limit_kmh")
 
   users     User[]
   devices   Device[]
@@ -82,6 +83,7 @@ model Vehicle {
   vin             String?      @unique
   vehicleType     String?      @map("vehicle_type") // CAR, TRUCK, VAN, etc.
   status          String       @default("ACTIVE") // ACTIVE, MAINTENANCE, INACTIVE
+  speedLimitKmh   Float?       @map("speed_limit_kmh")
   fuelType        String?      @map("fuel_type") // PETROL, DIESEL, ELECTRIC, HYBRID
   maxFuelCapacity Float?       @map("max_fuel_capacity")
   organizationId  String       @map("organization_id")
@@ -137,8 +139,17 @@ model Geofence {
   alertOnExit   Boolean @default(true) @map("alert_on_exit")
   speedLimitKmh Float?  @map("speed_limit_kmh")
 
+  // Episode configuration (defaults handled in code when null)
+  speedMinPings         Int?    @map("speed_min_pings")
+  speedMinDurationSec   Int?    @map("speed_min_duration_sec")
+  speedHysteresisKmh    Float?  @map("speed_hysteresis_kmh")
+  speedEndPings         Int?    @map("speed_end_pings")
+  speedRenotifyMin      Int?    @map("speed_renotify_min")
+  speedSeverityConfig   Json?   @map("speed_severity_config")
+
   // Geofence relation for alerts where category = "GEOFENCE"
-  alerts Alert[]
+  alerts            Alert[]
+  violationEpisodes GeofenceViolationEpisode[]
 
   /// PostGIS Polygon + GiST Index for high-performance spatial queries
   polygon Unsupported("geometry(Polygon, 4326)")
@@ -230,4 +241,45 @@ model RefreshToken {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("refresh_tokens")
+}
+
+/// A speeding episode within a geofence.
+model GeofenceViolationEpisode {
+  id              String    @id @default(cuid())
+  organizationId  String    @map("organization_id")
+  imei            String
+  geofenceId      String    @map("geofence_id")
+  geofence        Geofence  @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+
+  status          String    @default("OPEN") // OPEN, CLOSED
+  startedAt       DateTime  @map("started_at") @db.Timestamptz
+  endedAt         DateTime? @map("ended_at") @db.Timestamptz
+  durationSec     Int?      @map("duration_sec")
+
+  limitKmh        Float     @map("limit_kmh")
+  peakSpeedKmh    Float     @map("peak_speed_kmh")
+  avgSpeedKmh     Float?    @map("avg_speed_kmh")
+
+  startLat        Float     @map("start_lat")
+  startLng        Float     @map("start_lng")
+  peakLat         Float     @map("peak_lat")
+  peakLng         Float     @map("peak_lng")
+
+  severity        String    @default("MINOR") // MINOR, MAJOR, CRITICAL
+  pingCount       Int       @default(0) @map("ping_count")
+  notifiedCount   Int       @default(0) @map("notified_count")
+  lastNotifiedAt  DateTime? @map("last_notified_at") @db.Timestamptz
+
+  closeReason     String?   @map("close_reason") // RESOLVED, EXIT, TIMEOUT
+  acknowledgedBy  String?   @map("acknowledged_by")
+  acknowledgedAt  DateTime? @map("acknowledged_at") @db.Timestamptz
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([imei, geofenceId, startedAt])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, imei, createdAt(sort: Desc)])
+  @@index([organizationId, geofenceId, createdAt(sort: Desc)])
+  @@map("geofence_violation_episodes")
 }
