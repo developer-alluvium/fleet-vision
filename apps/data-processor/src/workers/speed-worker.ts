@@ -69,7 +69,7 @@ export async function batchCheckSpeedAlerts(
     for (const point of latestPerDevice.values()) {
       const globalLimit = orgLimits.get(point.organizationId) || 100;
       const vehicleLimit = vehicleLimits.get(point.imei);
-      const effectiveLimit = vehicleLimit !== null ? vehicleLimit : globalLimit;
+      const effectiveLimit = vehicleLimit != null ? vehicleLimit : globalLimit;
 
       const isSpeeding = point.speed! > effectiveLimit;
 

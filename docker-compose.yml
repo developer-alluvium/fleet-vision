@@ -33,7 +33,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # ─── Kafka (KRaft mode – no ZooKeeper) ─────────────────────
+  # ─── Kafka (KRaft mode with dual listeners) ─────────────────
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: fv-kafka
@@ -47,11 +47,11 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
-      # Listener settings
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Listener settings (host connects on 9092, docker containers connect on 29092)
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
       # Cluster
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
@@ -68,6 +68,50 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+
+  # ─── Backend APIs (Next.js) ─────────────────────────────────
+  backend-api:
+    image: punit084/gps:backend-api
+    build:
+      context: .
+      dockerfile: apps/web-dashboard/Dockerfile
+    container_name: fv-backend-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/fleet_vision?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_SECRET: "default_super_secret_key_change_me_in_prod"
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Data Processor Worker ──────────────────────────────────
+  data-processor:
+    image: punit084/gps:data-processor
+    build:
+      context: .
+      dockerfile: apps/data-processor/Dockerfile
+    container_name: fv-data-processor
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/fleet_vision?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      KAFKA_BROKERS: "kafka:29092"
+      KAFKA_TOPIC: "telemetry-raw"
+      CONSUMER_GROUP: "data-processor-group"
+      ENABLE_COLD_STORAGE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
 volumes:
   pg_data:

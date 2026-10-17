@@ -1,0 +1,11 @@
+node_modules
+.git
+.turbo
+dist
+.next
+.cache
+*.log
+npm-debug.log*
+.DS_Store
+*.zip
+archives/

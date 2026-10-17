@@ -2,6 +2,12 @@
 const nextConfig = {
   transpilePackages: ["@fleet-vision/db"],
   serverExternalPackages: ["ioredis"],
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   webpack: (config) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,

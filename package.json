@@ -18,9 +18,14 @@
     "db:push": "npm run db:push -w @fleet-vision/db",
     "db:migrate": "npm run db:migrate -w @fleet-vision/db",
     "db:studio": "npm run db:studio -w @fleet-vision/db",
-    "infra:up": "docker compose up -d",
+    "infra:up": "docker compose up -d postgres redis kafka",
     "infra:down": "docker compose down",
-    "infra:logs": "docker compose logs -f"
+    "infra:logs": "docker compose logs -f postgres redis kafka",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:push": "docker compose push"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

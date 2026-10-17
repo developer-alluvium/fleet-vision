@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "tsx src/index.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -13,12 +13,12 @@
     "@fleet-vision/db": "*",
     "dotenv": "^16.4.7",
     "kafkajs": "^2.2.4",
-    "node-cron": "^4.6.0"
+    "node-cron": "^4.6.0",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/node-cron": "^3.0.11",
-    "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }
 }
