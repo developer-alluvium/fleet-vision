@@ -1,14 +1,14 @@
 import * as dotenv from "dotenv";
 dotenv.config();
 
-import { prisma } from "../src";
+import { timescalePrisma } from "../src";
 
 async function main() {
   console.log("Starting safe deletion of all telemetry records...");
   
   // Safely delete only telemetry records.
   // This will NOT delete devices from PostgreSQL, and will NOT touch the Redis auth cache.
-  const result = await prisma.telemetryRecord.deleteMany();
+  const result = await timescalePrisma.telemetryRecord.deleteMany();
   
   console.log(`Successfully deleted ${result.count} telemetry records.`);
   console.log("Device registrations and Redis auth cache remain fully intact.");

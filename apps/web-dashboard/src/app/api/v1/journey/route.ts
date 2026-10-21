@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticate } from "@/lib/auth";
-import { prisma } from "@fleet-vision/db";
+import { timescalePrisma } from "@fleet-vision/db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const records = await prisma.telemetryRecord.findMany({
+    const records = await timescalePrisma.telemetryRecord.findMany({
       where: {
         imei,
         organizationId: orgId,

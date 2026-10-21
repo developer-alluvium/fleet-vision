@@ -54,13 +54,16 @@ export * from "./fuelCalibration";
 // (hot-reload creates new modules but we want to reuse the DB connection pool)
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  timescalePrisma: PrismaClient | undefined;
 };
 
 // Clear cached instance if schema changed in development
 if (process.env.NODE_ENV !== "production") {
   delete globalForPrisma.prisma;
+  delete globalForPrisma.timescalePrisma;
 }
 
+// Primary database client (RDS in production, local container in development)
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
@@ -70,6 +73,28 @@ export const prisma =
         : ["error"],
   });
 
+// Dedicated TimescaleDB client for time-series telemetry records
+// In production: points to TIMESCALE_URL (e.g. self-hosted TimescaleDB on EC2)
+// In development: falls back to primary `prisma` client if TIMESCALE_URL is not provided or equals DATABASE_URL
+const timescaleUrl = process.env.TIMESCALE_URL;
+
+export const timescalePrisma: PrismaClient =
+  timescaleUrl && timescaleUrl !== process.env.DATABASE_URL
+    ? (globalForPrisma.timescalePrisma ??= new PrismaClient({
+        datasources: {
+          db: {
+            url: timescaleUrl,
+          },
+        },
+        log:
+          process.env.NODE_ENV === "development"
+            ? ["query", "info", "warn", "error"]
+            : ["error"],
+      }))
+    : prisma;
+
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
+  globalForPrisma.timescalePrisma = timescalePrisma;
 }
+

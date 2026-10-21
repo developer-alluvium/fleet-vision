@@ -84,6 +84,8 @@ services:
       REDIS_URL: "redis://redis:6379"
       JWT_SECRET: "default_super_secret_key_change_me_in_prod"
       PORT: "3000"
+    volumes:
+      - archives_data:/app/archives
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,6 +107,8 @@ services:
       KAFKA_TOPIC: "telemetry-raw"
       CONSUMER_GROUP: "data-processor-group"
       ENABLE_COLD_STORAGE: "false"
+    volumes:
+      - archives_data:/app/archives
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,3 +121,5 @@ volumes:
   pg_data:
   redis_data:
   kafka_data:
+  archives_data:
+

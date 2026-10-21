@@ -1,0 +1,69 @@
+services:
+  # ─── Production Backend APIs (Next.js) ─────────────────────────
+  backend-api:
+    image: punit084/gps:backend-api
+    build:
+      context: .
+      dockerfile: apps/web-dashboard/Dockerfile
+    container_name: fv-backend-api
+    restart: always
+    network_mode: host
+    env_file:
+      - path: .env.production
+        required: false
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "${PORT:-3000}"
+      DATABASE_URL: "${DATABASE_URL}"
+      TIMESCALE_URL: "${TIMESCALE_URL:-}"
+      REDIS_URL: "${REDIS_URL}"
+      JWT_SECRET: "${JWT_SECRET}"
+      ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"
+      ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
+    volumes:
+      - archives_data:/app/archives
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ─── Production Data Processor Worker ──────────────────────────
+  data-processor:
+    image: punit084/gps:data-processor
+    build:
+      context: .
+      dockerfile: apps/data-processor/Dockerfile
+    container_name: fv-data-processor
+    restart: always
+    network_mode: host
+    env_file:
+      - path: .env.production
+        required: false
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "${DATABASE_URL}"
+      TIMESCALE_URL: "${TIMESCALE_URL:-}"
+      REDIS_URL: "${REDIS_URL}"
+      KAFKA_BROKERS: "${KAFKA_BROKERS}"
+      KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+      CONSUMER_GROUP: "${CONSUMER_GROUP:-data-processor-group}"
+      ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
+      RETENTION_MONTHS: "${RETENTION_MONTHS:-6}"
+      STALE_THRESHOLD_MINUTES: "${STALE_THRESHOLD_MINUTES:-5}"
+      INACTIVE_THRESHOLD_HOURS: "${INACTIVE_THRESHOLD_HOURS:-24}"
+      ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"
+    volumes:
+      - archives_data:/app/archives
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  archives_data:

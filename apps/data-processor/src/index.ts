@@ -9,7 +9,7 @@ import { startConsumer, stopConsumer } from "./consumer";
 import { processTelemetryBatch, getProcessorStats } from "./processor";
 import { archiveColdStorage } from "./workers/cold-storage";
 import { recomputeAllOrgStatuses } from "./workers/fleet-status";
-import { prisma, redis } from "@fleet-vision/db";
+import { prisma, timescalePrisma, redis } from "@fleet-vision/db";
 
 import cron from "node-cron";
 
@@ -20,14 +20,26 @@ async function main(): Promise<void> {
   console.log("│  Fleet Vision · Data Processor (Enterprise)  │");
   console.log("└──────────────────────────────────────────────┘");
 
-  // Verify database connectivity
+  // Verify primary database connectivity (RDS / PostgreSQL)
   try {
     await prisma.$connect();
-    console.log("[DB] ✓ Connected to TimescaleDB");
+    console.log("[DB] ✓ Connected to Primary PostgreSQL Database");
   } catch (err) {
-    console.error("[DB] ✗ Failed to connect to TimescaleDB:", err);
+    console.error("[DB] ✗ Failed to connect to Primary PostgreSQL Database:", err);
     process.exit(1);
   }
+
+  // Verify dedicated TimescaleDB connectivity (if separate URL configured)
+  if (timescalePrisma !== prisma) {
+    try {
+      await timescalePrisma.$connect();
+      console.log("[DB] ✓ Connected to Dedicated TimescaleDB Database");
+    } catch (err) {
+      console.error("[DB] ✗ Failed to connect to Dedicated TimescaleDB Database:", err);
+      process.exit(1);
+    }
+  }
+
 
   // Verify Redis connectivity
   try {

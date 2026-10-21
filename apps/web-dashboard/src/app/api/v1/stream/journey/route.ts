@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { authenticate } from "@/lib/auth";
 import Redis from "ioredis";
-import { prisma } from "@fleet-vision/db";
+import { prisma, timescalePrisma } from "@fleet-vision/db";
 
 export const dynamic = "force-dynamic";
 
@@ -117,7 +117,7 @@ export async function GET(request: NextRequest) {
         // ── Step 2: Query historical data from DB ──
         if (sinceDate) {
           try {
-            const records = await prisma.telemetryRecord.findMany({
+            const records = await timescalePrisma.telemetryRecord.findMany({
               where: {
                 imei,
                 organizationId: orgId,

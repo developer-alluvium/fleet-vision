@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const auth = await authenticate(request);
 
     let isClientConnected = true;
-    const subscriber = new Redis(REDIS_URL);
+    const subscriber= new Redis(REDIS_URL);
 
     // ── Channels to subscribe ────────────────────────────────
     // Add new alert channels here as you introduce more alert types

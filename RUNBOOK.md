@@ -94,11 +94,18 @@ curl "http://localhost:3000/api/v1/history?imei=353456789012345&orgId=PASTE_ORG_
 
 | Command | Description |
 |---|---|
-| `npm run infra:up` | Start Docker containers (TimescaleDB + Redis + Kafka) |
-| `npm run infra:down` | Stop Docker containers |
-| `npm run infra:logs` | Tail container logs |
-| `npm run dev` | Start dashboard + processor |
-| `npm run dev:all` | Start all 3 services |
+| `npm run infra:up` | Start Infrastructure only (TimescaleDB + Redis + Kafka) |
+| `npm run infra:down` | Stop Infrastructure containers |
+| `npm run infra:logs` | Tail infrastructure container logs |
+| `npm run docker:local:up` | **Local**: Start all 5 containers (TimescaleDB + Redis + Kafka + backend-api + data-processor) |
+| `npm run docker:local:down` | **Local**: Stop all 5 containers |
+| `npm run docker:local:logs` | **Local**: View logs for all 5 containers |
+| `npm run docker:prod:up` | **Production**: Start only backend-api and data-processor |
+| `npm run docker:prod:down` | **Production**: Stop production containers |
+| `npm run docker:prod:logs` | **Production**: View production container logs |
+| `npm run docker:prod:build` | **Production**: Build production container images |
+| `npm run dev` | Start dashboard + processor locally |
+| `npm run dev:all` | Start all 3 services locally |
 | `npm run dev:tcp` | Start Go TCP Gateway only |
 | `npm run dev:processor` | Start data processor only |
 | `npm run dev:dashboard` | Start Next.js dashboard only |

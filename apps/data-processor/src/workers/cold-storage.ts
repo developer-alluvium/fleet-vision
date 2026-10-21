@@ -1,5 +1,5 @@
 import path from "path";
-import { prisma } from "@fleet-vision/db";
+import { timescalePrisma } from "@fleet-vision/db";
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 /**
@@ -43,7 +43,7 @@ export async function archiveColdStorage(): Promise<void> {
 
   try {
     // ── 1. Count records to archive ──────────────────────────
-    const count = await prisma.telemetryRecord.count({
+    const count = await timescalePrisma.telemetryRecord.count({
       where: {
         time: { lt: cutoffDate },
       },
@@ -95,7 +95,7 @@ export async function archiveColdStorage(): Promise<void> {
     let totalExported = 0;
 
     while (true) {
-      const batch = await prisma.telemetryRecord.findMany({
+      const batch = await timescalePrisma.telemetryRecord.findMany({
         where: { time: { lt: cutoffDate } },
         orderBy: { time: "asc" },
         take: BATCH_SIZE,
@@ -146,7 +146,7 @@ export async function archiveColdStorage(): Promise<void> {
     );
 
     // ── 4. Delete archived rows from TimescaleDB ─────────────
-    const deleted: Array<{ count: bigint }> = await prisma.$queryRawUnsafe(
+    const deleted: Array<{ count: bigint }> = await timescalePrisma.$queryRawUnsafe(
       `DELETE FROM "telemetry_records" WHERE "time" < $1`,
       cutoffDate
     );

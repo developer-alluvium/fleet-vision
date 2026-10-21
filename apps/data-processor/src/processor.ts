@@ -1,4 +1,4 @@
-import { prisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings, getCachedCalibrationTable, rawToLiters } from "@fleet-vision/db";
+import { prisma, timescalePrisma, getDeviceAuth, updateLiveMap, publishLocationUpdate, publishJourneyRecords, Prisma, getCachedFuelSettings, getCachedCalibrationTable, rawToLiters } from "@fleet-vision/db";
 import { recomputeFleetStatus } from "./workers/fleet-status";
 import { batchCheckGeofencesForOrgs } from "./workers/geofence-worker";
 import { batchCheckSpeedAlerts } from "./workers/speed-worker";
@@ -256,7 +256,7 @@ export async function processTelemetryBatch(
   }
 
   // ── 4. Bulk insert into TimescaleDB ────────────────────
-  const result = await prisma.telemetryRecord.createMany({
+  const result = await timescalePrisma.telemetryRecord.createMany({
     data: validRecords,
   });
 
