@@ -1,6 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "localhost:3000";
+  const proto = request.headers.get("x-forwarded-proto") || "http";
+  const baseUrl = `${proto}://${host}`;
+
   const openApiSpec = {
     openapi: "3.0.0",
     info: {
@@ -18,12 +22,12 @@ export async function GET() {
     },
     servers: [
       {
-        url: "http://localhost:3000",
-        description: "Local Development Server (Localhost)",
+        url: baseUrl,
+        description: "Current Server (Auto-detected)",
       },
       {
-        url: "http://192.168.0.160:3000",
-        description: "Local Network Server",
+        url: "/",
+        description: "Relative Path",
       },
     ],
     tags: [
