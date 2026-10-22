@@ -1,69 +1,81 @@
+# docker-compose.prod.yml — Production overrides (EC2)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
 services:
-  # ─── Production Backend APIs (Next.js) ─────────────────────────
-  backend-api:
-    image: punit084/gps:backend-api
-    build:
-      context: .
-      dockerfile: apps/web-dashboard/Dockerfile
-    container_name: fv-backend-api
+  # ─── TimescaleDB + PostGIS (Production) ─────────────────────
+  timescaledb:
+    image: timescale/timescaledb-ha:pg15-latest
+    container_name: fv-timescaledb
     restart: always
-    network_mode: host
-    env_file:
-      - path: .env.production
-        required: false
-      - path: .env
-        required: false
+    networks:
+      - fleet-net
+    ports:
+      - "5433:5432"           # Host port 5433 for external psql access / debugging
     environment:
-      NODE_ENV: production
-      PORT: "${PORT:-3000}"
-      DATABASE_URL: "${DATABASE_URL}"
-      TIMESCALE_URL: "${TIMESCALE_URL:-}"
-      REDIS_URL: "${REDIS_URL}"
-      JWT_SECRET: "${JWT_SECRET}"
-      ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"
-      ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
+      POSTGRES_USER: "${TIMESCALE_USER:-postgres}"
+      POSTGRES_PASSWORD: "${TIMESCALE_PASSWORD}"
+      POSTGRES_DB: fleet_vision
     volumes:
-      - archives_data:/app/archives
+      - /opt/timescaledb/data:/var/lib/postgresql/data    # Persist on EC2 host disk
+      - ./scripts/init-timescaledb.sql:/docker-entrypoint-initdb.d/010-init-timescaledb.sql:ro
+    shm_size: "256mb"         # PostgreSQL shared_buffers needs adequate shared memory
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+        reservations:
+          memory: 2g
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
 
-  # ─── Production Data Processor Worker ──────────────────────────
-  data-processor:
-    image: punit084/gps:data-processor
-    build:
-      context: .
-      dockerfile: apps/data-processor/Dockerfile
-    container_name: fv-data-processor
+  # ─── Backend API (Production Overrides) ─────────────────────
+  backend-api:
     restart: always
-    network_mode: host
     env_file:
       - path: .env.production
-        required: false
-      - path: .env
-        required: false
+        required: true
     environment:
       NODE_ENV: production
-      DATABASE_URL: "${DATABASE_URL}"
-      TIMESCALE_URL: "${TIMESCALE_URL:-}"
-      REDIS_URL: "${REDIS_URL}"
-      KAFKA_BROKERS: "${KAFKA_BROKERS}"
-      KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
-      CONSUMER_GROUP: "${CONSUMER_GROUP:-data-processor-group}"
-      ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
+      # Connect to TimescaleDB container via Docker network
+      TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-postgres}:${TIMESCALE_PASSWORD}@timescaledb:5432/fleet_vision?schema=public"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ─── Data Processor (Production Overrides) ──────────────────
+  data-processor:
+    restart: always
+    env_file:
+      - path: .env.production
+        required: true
+    environment:
+      NODE_ENV: production
+      # Connect to TimescaleDB container via Docker network
+      TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-postgres}:${TIMESCALE_PASSWORD}@timescaledb:5432/fleet_vision?schema=public"
       RETENTION_MONTHS: "${RETENTION_MONTHS:-6}"
       STALE_THRESHOLD_MINUTES: "${STALE_THRESHOLD_MINUTES:-5}"
       INACTIVE_THRESHOLD_HOURS: "${INACTIVE_THRESHOLD_HOURS:-24}"
       ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"
-    volumes:
-      - archives_data:/app/archives
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
-
-volumes:
-  archives_data:

@@ -1,74 +1,12 @@
+# docker-compose.yml — Base application services
+# Local:  docker compose -f docker-compose.yml -f docker-compose.infra.yml up
+# Prod:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+networks:
+  fleet-net:
+    driver: bridge
+
 services:
-  # ─── TimescaleDB + PostGIS ──────────────────────────────────
-  postgres:
-    image: timescale/timescaledb-ha:pg15-latest
-    container_name: fv-postgres
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: fleet_vision
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # ─── Redis (Auth Cache + Live Map) ──────────────────────────
-  redis:
-    image: redis:alpine
-    container_name: fv-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  # ─── Kafka (KRaft mode with dual listeners) ─────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: fv-kafka
-    restart: unless-stopped
-    ports:
-      - "9092:9092"
-    environment:
-      # KRaft settings
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-      # Listener settings (host connects on 9092, docker containers connect on 29092)
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-
-      # Cluster
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
-      # Topic auto-creation
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-
   # ─── Backend APIs (Next.js) ─────────────────────────────────
   backend-api:
     image: punit084/gps:backend-api
@@ -77,20 +15,29 @@ services:
       dockerfile: apps/web-dashboard/Dockerfile
     container_name: fv-backend-api
     restart: unless-stopped
+    networks:
+      - fleet-net
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/fleet_vision?schema=public"
-      REDIS_URL: "redis://redis:6379"
-      JWT_SECRET: "default_super_secret_key_change_me_in_prod"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      TIMESCALE_URL: "${TIMESCALE_URL:-}"
+      REDIS_URL: "${REDIS_URL:-}"
+      JWT_SECRET: "${JWT_SECRET:-}"
       PORT: "3000"
     volumes:
       - archives_data:/app/archives
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (res) => { if (res.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # ─── Data Processor Worker ──────────────────────────────────
   data-processor:
@@ -100,26 +47,24 @@ services:
       dockerfile: apps/data-processor/Dockerfile
     container_name: fv-data-processor
     restart: unless-stopped
+    networks:
+      - fleet-net
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/fleet_vision?schema=public"
-      REDIS_URL: "redis://redis:6379"
-      KAFKA_BROKERS: "kafka:29092"
-      KAFKA_TOPIC: "telemetry-raw"
-      CONSUMER_GROUP: "data-processor-group"
-      ENABLE_COLD_STORAGE: "false"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      TIMESCALE_URL: "${TIMESCALE_URL:-}"
+      REDIS_URL: "${REDIS_URL:-}"
+      KAFKA_BROKERS: "${KAFKA_BROKERS:-}"
+      KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+      CONSUMER_GROUP: "${CONSUMER_GROUP:-data-processor-group}"
+      ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
     volumes:
       - archives_data:/app/archives
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+    stop_grace_period: 30s
 
 volumes:
-  pg_data:
-  redis_data:
-  kafka_data:
   archives_data:
-

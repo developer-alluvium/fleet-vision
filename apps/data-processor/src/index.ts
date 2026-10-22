@@ -98,6 +98,9 @@ async function shutdown(signal: string): Promise<void> {
   try {
     await stopConsumer();
     await redis.quit();
+    if (timescalePrisma !== prisma) {
+      await timescalePrisma.$disconnect();
+    }
     await prisma.$disconnect();
     console.log("[SHUTDOWN] ✓ Clean shutdown complete");
   } catch (err) {
