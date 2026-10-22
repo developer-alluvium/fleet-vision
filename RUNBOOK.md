@@ -83,18 +83,24 @@ sudo chmod 700 /opt/timescaledb/data
 #### 2. Configure Production Environment
 ```bash
 cp .env.production.example .env.production
-# Edit credentials: RDS endpoint & password, TimescaleDB password, Redis, Kafka, JWT secrets
-nano .env.production
+nano .env.production   # Fill in RDS, TimescaleDB, Redis, Kafka, and JWT values
+
+# Recommended: Also copy or symlink to .env so raw docker compose commands work without extra flags
+cp .env.production .env
 ```
 
 #### 3. Start Production Stack
 ```bash
+# Uses npm script (includes --env-file .env.production automatically):
 npm run docker:prod:up
+
+# Or raw docker compose command:
+docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 Verify containers are running:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml ps
 # Should show:
 #   fv-timescaledb (healthy) - 0.0.0.0:5433->5432/tcp
 #   fv-backend-api (healthy) - 0.0.0.0:3000->3000/tcp

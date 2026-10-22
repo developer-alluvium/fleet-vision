@@ -11,12 +11,15 @@ services:
       - fleet-net
     ports:
       - "5433:5432"           # Host port 5433 for external psql access / debugging
+    env_file:
+      - path: .env.production
+        required: true
     environment:
       POSTGRES_USER: "${TIMESCALE_USER:-postgres}"
       POSTGRES_PASSWORD: "${TIMESCALE_PASSWORD}"
       POSTGRES_DB: fleet_vision
     volumes:
-      - /opt/timescaledb/data:/var/lib/postgresql/data    # Persist on EC2 host disk
+      - ${TIMESCALE_DATA_PATH:-/opt/timescaledb/data}:/var/lib/postgresql/data    # Persist on EC2 host disk
       - ./scripts/init-timescaledb.sql:/docker-entrypoint-initdb.d/010-init-timescaledb.sql:ro
     shm_size: "256mb"         # PostgreSQL shared_buffers needs adequate shared memory
     deploy:
