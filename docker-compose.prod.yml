@@ -74,6 +74,10 @@ services:
       STALE_THRESHOLD_MINUTES: "${STALE_THRESHOLD_MINUTES:-5}"
       INACTIVE_THRESHOLD_HOURS: "${INACTIVE_THRESHOLD_HOURS:-24}"
       ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"
+      KAFKA_USE_TLS: "${KAFKA_USE_TLS:-false}"
+      KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
+      KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
+      KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -97,6 +101,10 @@ services:
       HEALTH_PORT: "${HEALTH_PORT:-8501}"
       KAFKA_BROKERS: "${KAFKA_BROKERS}"
       KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+      KAFKA_USE_TLS: "${KAFKA_USE_TLS:-false}"
+      KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
+      KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
+      KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
     deploy:
       resources:
         limits:

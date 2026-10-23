@@ -62,6 +62,10 @@ services:
       KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
       CONSUMER_GROUP: "${CONSUMER_GROUP:-data-processor-group}"
       ENABLE_COLD_STORAGE: "${ENABLE_COLD_STORAGE:-false}"
+      KAFKA_USE_TLS: "${KAFKA_USE_TLS:-false}"
+      KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
+      KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
+      KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
     volumes:
       - archives_data:/app/archives
     stop_grace_period: 30s
@@ -89,6 +93,10 @@ services:
       HEALTH_PORT: "8501"
       KAFKA_BROKERS: "${KAFKA_BROKERS:-}"
       KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+      KAFKA_USE_TLS: "${KAFKA_USE_TLS:-false}"
+      KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
+      KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
+      KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
     stop_grace_period: 15s
 
 volumes:

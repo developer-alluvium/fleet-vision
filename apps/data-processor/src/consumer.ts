@@ -11,11 +11,31 @@ const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || "localhost:9092").split(",")
 const KAFKA_TOPIC = process.env.KAFKA_TOPIC || "telemetry-raw";
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP || "data-processor-group";
 
+const useTLS =
+  process.env.KAFKA_USE_TLS === "true" ||
+  process.env.KAFKA_SSL === "true" ||
+  KAFKA_BROKERS.some((b) => b.includes(":9094") || b.includes(":9098") || b.includes(":443"));
+
+const saslUser = process.env.KAFKA_SASL_USER;
+const saslPass = process.env.KAFKA_SASL_PASS;
+const saslMech = (process.env.KAFKA_SASL_MECHANISM || "plain").toLowerCase();
+
+const saslConfig =
+  saslUser && saslPass
+    ? {
+        mechanism: saslMech as any,
+        username: saslUser,
+        password: saslPass,
+      }
+    : undefined;
+
 // ─── Kafka Client ────────────────────────────────────────────
 
 const kafka = new Kafka({
   clientId: "fleet-vision-data-processor",
   brokers: KAFKA_BROKERS,
+  ssl: useTLS ? true : undefined,
+  sasl: saslConfig,
   logLevel: logLevel.WARN,
   retry: {
     initialRetryTime: 300,

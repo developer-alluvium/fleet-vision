@@ -23,6 +23,8 @@ func main() {
 	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
 	kafkaTopic := getEnv("KAFKA_TOPIC", "telemetry-raw")
 
+	kafkaUseTLS := getEnv("KAFKA_USE_TLS", "false")
+
 	brokerList := strings.Split(kafkaBrokers, ",")
 
 	log.Println("┌──────────────────────────────────────────────┐")
@@ -31,6 +33,7 @@ func main() {
 	log.Printf("│  TCP Port    : %s\n", tcpPort)
 	log.Printf("│  Health Port : %s\n", healthPort)
 	log.Printf("│  Kafka       : %s\n", kafkaBrokers)
+	log.Printf("│  Kafka TLS   : %s\n", kafkaUseTLS)
 	log.Printf("│  Topic       : %s\n", kafkaTopic)
 	log.Println("└──────────────────────────────────────────────┘")
 
