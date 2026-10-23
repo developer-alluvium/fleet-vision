@@ -10,20 +10,26 @@ Fleet Vision supports two primary execution topologies:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. LOCAL DEVELOPMENT (Full Stack Containerized)                             │
+│ 1. LOCAL DEVELOPMENT (Full Stack Containerized — 6 Containers)             │
 │                                                                             │
-│  [ Docker Bridge Network: default ]                                         │
+│  [ Docker Bridge Network: fleet-net ]                                       │
 │  ┌────────────────┐     ┌──────────────┐     ┌──────────────┐               │
 │  │  fv-postgres   │     │   fv-redis   │     │   fv-kafka   │               │
 │  │ (Timescale+GIS)│     │  (Port 6379) │     │ (KRaft 9092) │               │
 │  └────────┬───────┘     └──────┬───────┘     └──────┬───────┘               │
 │           │                    │                    │                       │
-│           └───────────┬────────┴────────────┬───────┘                       │
-│                       ▼                     ▼                               │
-│              ┌─────────────────┐   ┌──────────────────┐                     │
-│              │ fv-backend-api  │   │fv-data-processor │                     │
-│              │ (Next.js :3000) │   │ (Kafka Consumer) │                     │
-│              └─────────────────┘   └──────────────────┘                     │
+│           │                    │         ┌──────────┴──────────┐            │
+│           │                    │         ▼                     ▼            │
+│           │                    │   ┌───────────────┐  ┌──────────────────┐  │
+│           │                    │   │ fv-tcp-server │  │fv-data-processor │  │
+│           │                    │   │ (TCP :8500)   │  │ (Kafka Consumer) │  │
+│           │                    │   └───────────────┘  └──────────────────┘  │
+│           └───────────┬────────┴────────────┘                               │
+│                       ▼                                                     │
+│              ┌─────────────────┐                                            │
+│              │ fv-backend-api  │                                            │
+│              │ (Next.js :3000) │                                            │
+│              └─────────────────┘                                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -34,18 +40,18 @@ Fleet Vision supports two primary execution topologies:
 │  │ AWS RDS/TimescaleDB  │  │ AWS ElastiCache/Redis│  │ AWS MSK / Kafka    │ │
 │  └──────────┬───────────┘  └──────────┬───────────┘  └─────────┬──────────┘ │
 │             │                         │                        │            │
-│             └────────────┬────────────┴─────────────┬──────────┘            │
-│                          ▼                          ▼                       │
-│  [ Production Docker Stack ]                        │                       │
-│  ┌─────────────────────────────────┐   ┌────────────┴───────────┐           │
-│  │         fv-backend-api          │   │   fv-data-processor    │           │
-│  │         (Next.js :3000)         │   │    (Worker Daemon)     │           │
-│  └─────────────────────────────────┘   └────────────────────────┘           │
-│                                                                             │
-│  [ Native Host / EC2 Service ]                                              │
-│  ┌──────────────────────────────────────────────────────────────┐           │
-│  │  Teltonika Go TCP Server (systemd :8500 -> Kafka)            │           │
-│  └──────────────────────────────────────────────────────────────┘           │
+│             │                         │         ┌──────────────┴─────────┐  │
+│             │                         │         ▼                        ▼  │
+│             │                         │   ┌───────────────┐  ┌─────────────┐│
+│             │                         │   │ fv-tcp-server │  │fv-data-proc ││
+│             │                         │   │ (TCP :8500)   │  │ (Worker)    ││
+│             │                         │   └───────────────┘  └─────────────┘│
+│             └────────────┬────────────┴─────────────┘                       │
+│                          ▼                                                  │
+│              ┌───────────────────────┐                                      │
+│              │    fv-backend-api     │                                      │
+│              │    (Next.js :3000)    │                                      │
+│              └───────────────────────┘                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -55,19 +61,19 @@ Fleet Vision supports two primary execution topologies:
 
 | Environment | Compose File | Target Services | Env File | Hostname Target |
 |---|---|---|---|---|
-| **Local (All Containers)** | [`docker-compose.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.yml) | `postgres`, `redis`, `kafka`, `backend-api`, `data-processor` | Auto-configured inside compose | Internal Docker DNS (`postgres`, `redis`, `kafka`) |
-| **Local (Hybrid Dev)** | [`docker-compose.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.yml) | `postgres`, `redis`, `kafka` | [`.env`](file:///home/yash/Desktop/projects/fleet-vision/.env) | `localhost` (ports 5432, 6379, 9092) |
-| **Production** | [`docker-compose.prod.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.prod.yml) | `backend-api`, `data-processor` | `.env.production` (from [`.env.production.example`](file:///home/yash/Desktop/projects/fleet-vision/.env.production.example)) | External cloud hostnames / IPs |
+| **Local (All Containers)** | [`docker-compose.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.yml) + [`docker-compose.infra.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.infra.yml) | `postgres`, `redis`, `kafka`, `backend-api`, `data-processor`, `tcp-server` | Auto-configured inside compose | Internal Docker DNS (`postgres`, `redis`, `kafka`) |
+| **Local (Hybrid Dev)** | [`docker-compose.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.yml) + [`docker-compose.infra.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.infra.yml) | `postgres`, `redis`, `kafka` | [`.env`](file:///home/yash/Desktop/projects/fleet-vision/.env) | `localhost` (ports 5432, 6379, 9092) |
+| **Production** | [`docker-compose.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.yml) + [`docker-compose.prod.yml`](file:///home/yash/Desktop/projects/fleet-vision/docker-compose.prod.yml) | `timescaledb`, `backend-api`, `data-processor`, `tcp-server` | `.env.production` (from [`.env.production.example`](file:///home/yash/Desktop/projects/fleet-vision/.env.production.example)) | External cloud hostnames / IPs |
 
 ---
 
 ## 💻 1. Local Development Workflows
 
-### Option A: Full Docker Stack (All 5 Containers)
-Recommended when you want to run the entire backend and worker stack without installing Node.js dependencies locally.
+### Option A: Full Docker Stack (All 6 Containers)
+Recommended when you want to run the entire backend, worker, and GPS TCP gateway without installing Go or Node.js dependencies locally.
 
 ```bash
-# 1. Start all 5 containers
+# 1. Start all 6 containers
 npm run docker:local:up
 
 # 2. Check running container status

@@ -1,6 +1,6 @@
 module fleet-vision/tcp-server
 
-go 1.18
+go 1.23
 
 require github.com/segmentio/kafka-go v0.4.51
 

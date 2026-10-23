@@ -33,7 +33,7 @@ services:
     volumes:
       - archives_data:/app/archives
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (res) => { if (res.statusCode !== 200) process.exit(1); }).on('error', () => process.exit(1));"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -65,6 +65,31 @@ services:
     volumes:
       - archives_data:/app/archives
     stop_grace_period: 30s
+
+  # ─── TCP Ingestion Gateway (Teltonika) ───────────────────────
+  tcp-server:
+    image: punit084/gps:tcp-server
+    build:
+      context: .
+      dockerfile: apps/tcp-server/Dockerfile
+    container_name: fv-tcp-server
+    restart: unless-stopped
+    networks:
+      - fleet-net
+    ports:
+      - "${TCP_PORT:-8500}:8500"
+      - "${HEALTH_PORT:-8501}:8501"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      TCP_PORT: "8500"
+      HEALTH_PORT: "8501"
+      KAFKA_BROKERS: "${KAFKA_BROKERS:-}"
+      KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+    stop_grace_period: 15s
 
 volumes:
   archives_data:

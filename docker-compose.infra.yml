@@ -98,6 +98,14 @@ services:
       kafka:
         condition: service_healthy
 
+  tcp-server:
+    environment:
+      # Local: connect to Kafka container via internal Docker network
+      KAFKA_BROKERS: "kafka:29092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 volumes:
   pg_data:
   redis_data:

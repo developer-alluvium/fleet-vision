@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,7 @@ func main() {
 
 	// ── Configuration from environment ───────────────────────
 	tcpPort := getEnv("TCP_PORT", "8500")
+	healthPort := getEnv("HEALTH_PORT", "8501")
 	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
 	kafkaTopic := getEnv("KAFKA_TOPIC", "telemetry-raw")
 
@@ -27,6 +29,7 @@ func main() {
 	log.Println("│        Fleet Vision · TCP Gateway            │")
 	log.Println("├──────────────────────────────────────────────┤")
 	log.Printf("│  TCP Port    : %s\n", tcpPort)
+	log.Printf("│  Health Port : %s\n", healthPort)
 	log.Printf("│  Kafka       : %s\n", kafkaBrokers)
 	log.Printf("│  Topic       : %s\n", kafkaTopic)
 	log.Println("└──────────────────────────────────────────────┘")
@@ -34,6 +37,25 @@ func main() {
 	// ── Initialize Kafka Producer ────────────────────────────
 	producer := NewKafkaProducer(brokerList, kafkaTopic)
 	defer producer.Close()
+
+	// ── Start Health Check HTTP Server ───────────────────────
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok","service":"tcp-server"}`))
+	})
+	healthServer := &http.Server{
+		Addr:    fmt.Sprintf(":%s", healthPort),
+		Handler: healthMux,
+	}
+	go func() {
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("[HEALTH] Server error: %v", err)
+		}
+	}()
+	defer healthServer.Close()
+	log.Printf("[HEALTH] Listening on :%s/healthz", healthPort)
 
 	// ── Start TCP Listener ───────────────────────────────────
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", tcpPort))
@@ -51,6 +73,7 @@ func main() {
 		sig := <-sigChan
 		log.Printf("[SHUTDOWN] Received %v – shutting down…", sig)
 		listener.Close()
+		healthServer.Close()
 		producer.Close()
 		os.Exit(0)
 	}()

@@ -82,3 +82,28 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+
+  # ─── TCP Ingestion Gateway (Production Overrides) ───────────
+  tcp-server:
+    restart: always
+    env_file:
+      - path: .env.production
+        required: true
+    environment:
+      TCP_PORT: "${TCP_PORT:-8500}"
+      HEALTH_PORT: "${HEALTH_PORT:-8501}"
+      KAFKA_BROKERS: "${KAFKA_BROKERS}"
+      KAFKA_TOPIC: "${KAFKA_TOPIC:-telemetry-raw}"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
+          cpus: "0.25"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
