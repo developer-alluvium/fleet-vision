@@ -5,11 +5,16 @@ import (
 	"crypto/tls"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	sigv4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
+	"github.com/segmentio/kafka-go/sasl/aws_msk_iam"
 	"github.com/segmentio/kafka-go/sasl/plain"
 	"github.com/segmentio/kafka-go/sasl/scram"
 )
@@ -19,6 +24,24 @@ type KafkaProducer struct {
 	writer *kafka.Writer
 }
 
+// extractAwsRegion extracts the AWS region from environment variables or broker hostnames.
+func extractAwsRegion(brokers []string) string {
+	if r := os.Getenv("AWS_REGION"); r != "" {
+		return r
+	}
+	if r := os.Getenv("AWS_DEFAULT_REGION"); r != "" {
+		return r
+	}
+	re := regexp.MustCompile(`\.([a-z]{2}-[a-z]+-\d+)\.amazonaws\.com`)
+	for _, b := range brokers {
+		matches := re.FindStringSubmatch(b)
+		if len(matches) > 1 {
+			return matches[1]
+		}
+	}
+	return "ap-south-1"
+}
+
 // buildKafkaTransport inspects environment variables and broker addresses to determine
 // if TLS or SASL authentication is required, and configures a kafka.Transport accordingly.
 func buildKafkaTransport(brokers []string) *kafka.Transport {
@@ -26,8 +49,24 @@ func buildKafkaTransport(brokers []string) *kafka.Transport {
 	sslEnv := strings.ToLower(os.Getenv("KAFKA_SSL"))
 	useTLS := tlsEnv == "true" || tlsEnv == "1" || tlsEnv == "yes" || sslEnv == "true" || sslEnv == "1" || sslEnv == "yes"
 
+	// Auto-detect if AWS MSK IAM authentication is needed (port 9098 or kafka-serverless)
+	isMskIam := strings.ToUpper(os.Getenv("KAFKA_SASL_MECHANISM")) == "AWS_MSK_IAM" ||
+		strings.ToUpper(os.Getenv("KAFKA_SASL_MECHANISM")) == "OAUTHBEARER"
+
+	if !isMskIam {
+		for _, b := range brokers {
+			bTrim := strings.TrimSpace(b)
+			if strings.HasSuffix(bTrim, ":9098") || strings.Contains(bTrim, "kafka-serverless") {
+				isMskIam = true
+				break
+			}
+		}
+	}
+
 	// Auto-detect TLS if broker port indicates TLS (e.g. :9094 for AWS MSK TLS, :9098 for MSK IAM TLS, :443)
-	if !useTLS {
+	if isMskIam {
+		useTLS = true
+	} else if !useTLS {
 		for _, b := range brokers {
 			bTrim := strings.TrimSpace(b)
 			if strings.HasSuffix(bTrim, ":9094") || strings.HasSuffix(bTrim, ":9098") || strings.HasSuffix(bTrim, ":443") {
@@ -41,7 +80,7 @@ func buildKafkaTransport(brokers []string) *kafka.Transport {
 	saslPass := os.Getenv("KAFKA_SASL_PASS")
 
 	// If neither TLS nor SASL is required, return nil to use default plaintext transport
-	if !useTLS && saslUser == "" {
+	if !useTLS && !isMskIam && saslUser == "" {
 		return nil
 	}
 
@@ -60,7 +99,25 @@ func buildKafkaTransport(brokers []string) *kafka.Transport {
 		log.Println("[KAFKA] TLS enabled for Kafka broker connection")
 	}
 
-	if saslUser != "" && saslPass != "" {
+	if isMskIam {
+		region := extractAwsRegion(brokers)
+		sess, err := session.NewSessionWithOptions(session.Options{
+			Config: aws.Config{
+				Region: aws.String(region),
+			},
+			SharedConfigState: session.SharedConfigEnable,
+		})
+		if err != nil {
+			log.Printf("[KAFKA] ✗ Failed to create AWS session for MSK IAM: %v", err)
+		} else {
+			signer := sigv4.NewSigner(sess.Config.Credentials)
+			transport.SASL = &aws_msk_iam.Mechanism{
+				Signer: signer,
+				Region: region,
+			}
+			log.Printf("[KAFKA] AWS MSK IAM authentication enabled (region=%s)", region)
+		}
+	} else if saslUser != "" && saslPass != "" {
 		saslMech := strings.ToUpper(os.Getenv("KAFKA_SASL_MECHANISM"))
 		var mechanism sasl.Mechanism
 		var err error

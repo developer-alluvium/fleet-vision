@@ -3,7 +3,9 @@ import {
   Consumer,
   EachBatchPayload,
   logLevel,
+  SASLOptions,
 } from "kafkajs";
+import { generateAuthToken } from "aws-msk-iam-sasl-signer-js";
 
 // ─── Configuration ───────────────────────────────────────────
 
@@ -11,7 +13,23 @@ const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || "localhost:9092").split(",")
 const KAFKA_TOPIC = process.env.KAFKA_TOPIC || "telemetry-raw";
 const CONSUMER_GROUP = process.env.CONSUMER_GROUP || "data-processor-group";
 
+function extractAwsRegion(brokers: string[]): string {
+  if (process.env.AWS_REGION) return process.env.AWS_REGION;
+  if (process.env.AWS_DEFAULT_REGION) return process.env.AWS_DEFAULT_REGION;
+  for (const b of brokers) {
+    const match = b.match(/\.([a-z]{2}-[a-z]+-\d+)\.amazonaws\.com/i);
+    if (match) return match[1];
+  }
+  return "ap-south-1";
+}
+
+const isMskIam =
+  process.env.KAFKA_SASL_MECHANISM === "AWS_MSK_IAM" ||
+  process.env.KAFKA_SASL_MECHANISM === "OAUTHBEARER" ||
+  KAFKA_BROKERS.some((b) => b.includes(":9098") || b.includes("kafka-serverless"));
+
 const useTLS =
+  isMskIam ||
   process.env.KAFKA_USE_TLS === "true" ||
   process.env.KAFKA_SSL === "true" ||
   KAFKA_BROKERS.some((b) => b.includes(":9094") || b.includes(":9098") || b.includes(":443"));
@@ -20,14 +38,27 @@ const saslUser = process.env.KAFKA_SASL_USER;
 const saslPass = process.env.KAFKA_SASL_PASS;
 const saslMech = (process.env.KAFKA_SASL_MECHANISM || "plain").toLowerCase();
 
-const saslConfig =
-  saslUser && saslPass
-    ? {
-        mechanism: saslMech as any,
-        username: saslUser,
-        password: saslPass,
-      }
-    : undefined;
+let saslConfig: SASLOptions | undefined = undefined;
+
+if (isMskIam) {
+  const region = extractAwsRegion(KAFKA_BROKERS);
+  console.log(`[KAFKA] AWS MSK IAM authentication enabled (region: ${region})`);
+  saslConfig = {
+    mechanism: "oauthbearer",
+    oauthBearerProvider: async () => {
+      const authTokenResponse = await generateAuthToken({ region });
+      return {
+        value: authTokenResponse.token,
+      };
+    },
+  };
+} else if (saslUser && saslPass) {
+  saslConfig = {
+    mechanism: saslMech as any,
+    username: saslUser,
+    password: saslPass,
+  };
+}
 
 // ─── Kafka Client ────────────────────────────────────────────
 

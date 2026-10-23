@@ -78,6 +78,10 @@ services:
       KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
       KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
       KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_REGION: "${AWS_REGION:-ap-south-1}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-south-1}"
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -105,6 +109,10 @@ services:
       KAFKA_SASL_USER: "${KAFKA_SASL_USER:-}"
       KAFKA_SASL_PASS: "${KAFKA_SASL_PASS:-}"
       KAFKA_SASL_MECHANISM: "${KAFKA_SASL_MECHANISM:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_REGION: "${AWS_REGION:-ap-south-1}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-south-1}"
     deploy:
       resources:
         limits:

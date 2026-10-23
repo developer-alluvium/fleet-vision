@@ -11,6 +11,7 @@
   "dependencies": {
     "@dsnp/parquetjs": "^1.8.8",
     "@fleet-vision/db": "*",
+    "aws-msk-iam-sasl-signer-js": "^1.0.3",
     "dotenv": "^16.4.7",
     "kafkajs": "^2.2.4",
     "node-cron": "^4.6.0",
