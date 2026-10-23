@@ -86,6 +86,9 @@ services:
   # ─── TCP Ingestion Gateway (Production Overrides) ───────────
   tcp-server:
     restart: always
+    ports:
+      - "${TCP_PORT:-8500}:8500"
+      - "${HEALTH_PORT:-8501}:8501"
     env_file:
       - path: .env.production
         required: true
