@@ -37,9 +37,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (password !== undefined && password !== null && password !== "") {
+      if (typeof password !== "string" || password.length < 6) {
+        return NextResponse.json(
+          { error: "Password must be at least 6 characters long" },
+          { status: 400 }
+        );
+      }
+    }
+
     // ── Check for duplicate email ──────────────────────────
     const existingUser = await prisma.user.findUnique({
-      where: { email: adminEmail },
+      where: { email: adminEmail.toLowerCase().trim() },
     });
     if (existingUser) {
       return NextResponse.json(
@@ -56,14 +65,9 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // Hash the password if provided, otherwise leave it null (or we could enforce it)
-      // Since it's a new feature, let's enforce it if provided, or generate a dummy one if not
-      // to not break existing clients
       let passwordHash = null;
       if (password && typeof password === "string" && password.length >= 6) {
         passwordHash = await bcrypt.hash(password, 10);
-      } else if (password) {
-        throw new Error("Password must be at least 6 characters");
       }
 
       const user = await tx.user.create({
@@ -72,6 +76,13 @@ export async function POST(request: NextRequest) {
           password: passwordHash,
           role: "ADMIN",
           organizationId: organization.id,
+        },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          organizationId: true,
+          createdAt: true,
         },
       });
 
