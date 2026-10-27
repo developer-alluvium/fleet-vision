@@ -26,10 +26,19 @@ export async function POST(request: NextRequest) {
 
     const user = storedToken.user;
 
-    // Delete the old refresh token (rotation)
-    await prisma.refreshToken.delete({
+    // Instead of deleting immediately, set expiration to 30s in the future (grace period for concurrent requests)
+    await prisma.refreshToken.update({
       where: { id: storedToken.id },
-    });
+      data: { expiresAt: new Date(Date.now() + 30 * 1000) },
+    }).catch(() => {});
+
+    // Clean up expired tokens asynchronously
+    prisma.refreshToken.deleteMany({
+      where: {
+        userId: user.id,
+        expiresAt: { lt: new Date() },
+      },
+    }).catch(() => {});
 
     // Generate new access token
     const newAccessToken = await new SignJWT({

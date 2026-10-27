@@ -16,6 +16,12 @@ export async function GET(request: NextRequest) {
       try {
         const { payload } = await jwtVerify(accessToken, JWT_SECRET);
         return NextResponse.json({
+          user: {
+            id: payload.userId,
+            email: payload.email,
+            organizationId: payload.organizationId,
+            role: payload.role,
+          },
           id: payload.userId,
           email: payload.email,
           organizationId: payload.organizationId,
@@ -44,10 +50,19 @@ export async function GET(request: NextRequest) {
 
     const user = storedToken.user;
 
-    // Rotate refresh token
-    await prisma.refreshToken.delete({
+    // Instead of deleting immediately, set expiration to 30s in the future (grace period for concurrent requests)
+    await prisma.refreshToken.update({
       where: { id: storedToken.id },
-    });
+      data: { expiresAt: new Date(Date.now() + 30 * 1000) },
+    }).catch(() => {});
+
+    // Clean up expired tokens asynchronously
+    prisma.refreshToken.deleteMany({
+      where: {
+        userId: user.id,
+        expiresAt: { lt: new Date() },
+      },
+    }).catch(() => {});
 
     const newAccessToken = await new SignJWT({
       userId: user.id,
@@ -71,6 +86,12 @@ export async function GET(request: NextRequest) {
     });
 
     const response = NextResponse.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        organizationId: user.organizationId,
+        role: user.role,
+      },
       id: user.id,
       email: user.email,
       organizationId: user.organizationId,

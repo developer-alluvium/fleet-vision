@@ -50,6 +50,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ geofences, totalCount });
   } catch (error: any) {
     console.error("[API] GET /api/v1/geofences error:", error);
+    if (error.message && (error.message.includes("Authentication required") || error.message.includes("Invalid token") || error.message.includes("API key"))) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
