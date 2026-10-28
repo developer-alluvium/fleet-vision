@@ -1,4 +1,26 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
 import { processSpeedPing, SpeedEpisodeConfig, SpeedEpisodeState, createInitialState } from "../speed-episode-engine";
+
+function expect<T>(actual: T) {
+  return {
+    toBe(expected: T) {
+      assert.strictEqual(actual, expected);
+    },
+    toBeGreaterThan(expected: number) {
+      assert.ok(
+        (actual as unknown as number) > expected,
+        `Expected ${actual} to be greater than ${expected}`
+      );
+    },
+    toBeLessThan(expected: number) {
+      assert.ok(
+        (actual as unknown as number) < expected,
+        `Expected ${actual} to be less than ${expected}`
+      );
+    },
+  };
+}
 
 describe("Speed Episode Engine", () => {
   const config: SpeedEpisodeConfig = {

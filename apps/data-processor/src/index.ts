@@ -61,9 +61,9 @@ async function main(): Promise<void> {
   // Log stats every 30 seconds
   setInterval(() => {
     const stats = getProcessorStats();
-    if (stats.processedCount > 0 || stats.droppedCount > 0) {
+    if (stats.processedCount > 0 || stats.droppedCount > 0 || stats.totalEvaluated > 0) {
       console.log(
-        `[STATS] Processed: ${stats.processedCount} | Dropped: ${stats.droppedCount}`
+        `[STATS] TimescaleDB Saved: ${stats.processedCount} | Skipped Duplicates: ${stats.skippedDuplicates} | Evaluated: ${stats.totalEvaluated} | Storage Suppression: ${stats.suppressionRatePercent}%`
       );
     }
   }, 30_000);
