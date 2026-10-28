@@ -721,6 +721,71 @@ export async function GET(request: NextRequest) {
             "404": { description: "Vehicle not found." },
           },
         },
+        delete: {
+          tags: ["Vehicles"],
+          summary: "Delete Vehicle with Safety Guardrails",
+          description:
+            "Deletes a vehicle with enterprise guardrail checks (prevents deleting vehicles in motion, with open geofence violations, or unresolved SOS alerts). Unassigns associated tracking hardware back to available inventory and purges Redis live telemetry caches.",
+          security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
+          parameters: [
+            {
+              name: "vehicleId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "force",
+              in: "query",
+              required: false,
+              description: "Bypass motion and alert guardrails for emergency decommissioning.",
+              schema: { type: "boolean", default: false },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Vehicle successfully deleted and hardware unassigned.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      success: { type: "boolean", example: true },
+                      message: { type: "string", example: "Vehicle GJ01GH2036 deleted successfully." },
+                      deletedVehicle: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          plateNumber: { type: "string" },
+                          unassignedDeviceId: { type: "string", nullable: true },
+                          unassignedImei: { type: "string", nullable: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized." },
+            "403": { description: "Forbidden (Insufficient role or tenancy mismatch)." },
+            "404": { description: "Vehicle not found." },
+            "409": {
+              description: "Conflict: Safety guardrail blocked deletion (e.g. vehicle moving, active violation episode, or unresolved SOS alert).",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      error: { type: "string" },
+                      code: { type: "string", example: "VEHICLE_IN_MOTION" },
+                      details: { type: "object" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       "/api/v1/vehicles/{vehicleId}/fuel-calibration-table": {
         get: {
