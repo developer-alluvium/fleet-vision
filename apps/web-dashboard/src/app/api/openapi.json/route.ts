@@ -63,8 +63,132 @@ export async function GET(request: NextRequest) {
         name: "Alerts",
         description: "Real-time alert streaming via Server-Sent Events. Supports multiple alert categories including geofence boundary crossings, speed violations, and more.",
       },
+      {
+        name: "TCP Gateway & Remote Stream (Port 8501)",
+        description: "Direct real-time HTTP streaming and snapshot endpoints hosted on the Teltonika TCP Server (Port 8501). Supports Server-Sent Events (SSE) for remote developers and field testing.",
+      },
     ],
     paths: {
+      // ─────────────────────────────────────────────────────────
+      // TCP SERVER / TELEMETRY STREAM GATEWAY (PORT 8501)
+      // ─────────────────────────────────────────────────────────
+      "/stream": {
+        get: {
+          tags: ["TCP Gateway & Remote Stream (Port 8501)"],
+          summary: "Live Vehicle Telemetry Stream (Server-Sent Events)",
+          description:
+            "Subscribes to real-time incoming vehicle telemetry packets broadcast directly from the Teltonika TCP ingestion server (Port 8501). Pushes Server-Sent Events containing parsed AVL records and raw hex payload.",
+          parameters: [
+            {
+              name: "imei",
+              in: "query",
+              required: false,
+              description: "Optional 15-digit hardware IMEI. If specified, only packets from this device will be streamed.",
+              schema: { type: "string", example: "864209041234567" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Continuous stream of Server-Sent Events (SSE). Each event starts with `data: ` followed by a JSON TelemetryMessage.",
+              content: {
+                "text/event-stream": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      imei: { type: "string", example: "864209041234567" },
+                      codec: { type: "string", example: "codec8e" },
+                      server_timestamp: { type: "string", format: "date-time" },
+                      raw_hex: { type: "string" },
+                      records: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            timestamp: { type: "string", format: "date-time" },
+                            priority: { type: "integer", example: 1 },
+                            longitude: { type: "number", example: 77.209 },
+                            latitude: { type: "number", example: 28.6139 },
+                            altitude: { type: "integer", example: 215 },
+                            angle: { type: "integer", example: 180 },
+                            satellites: { type: "integer", example: 14 },
+                            speed: { type: "integer", example: 62 },
+                            io_elements: { type: "object" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/latest": {
+        get: {
+          tags: ["TCP Gateway & Remote Stream (Port 8501)"],
+          summary: "Get Latest Telemetry Snapshot",
+          description:
+            "Returns the most recent telemetry packet received for all active vehicles, or for a specific vehicle via query parameter.",
+          parameters: [
+            {
+              name: "imei",
+              in: "query",
+              required: false,
+              description: "Optional 15-digit hardware IMEI. When provided, returns only the single latest packet for that device.",
+              schema: { type: "string", example: "864209041234567" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Latest telemetry snapshot.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      device_count: { type: "integer", example: 5 },
+                      devices: { type: "object" },
+                      timestamp: { type: "string", format: "date-time" },
+                    },
+                  },
+                },
+              },
+            },
+            "404": {
+              description: "No telemetry found for the specified IMEI.",
+            },
+          },
+        },
+      },
+      "/healthz": {
+        get: {
+          tags: ["TCP Gateway & Remote Stream (Port 8501)"],
+          summary: "TCP Server Health & Streaming Metrics",
+          description:
+            "Returns operational health, total packets received, active stream listeners, and tracked device counts.",
+          responses: {
+            "200": {
+              description: "Service is healthy and operating normally.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      status: { type: "string", example: "ok" },
+                      service: { type: "string", example: "tcp-server" },
+                      active_listeners: { type: "integer", example: 3 },
+                      active_devices_tracked: { type: "integer", example: 12 },
+                      total_packets_received: { type: "integer", example: 4520 },
+                      uptime_seconds: { type: "integer", example: 3600 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       // ─────────────────────────────────────────────────────────
       // AUTHENTICATION
       // ─────────────────────────────────────────────────────────

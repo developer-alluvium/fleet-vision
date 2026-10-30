@@ -16,12 +16,13 @@ type AVLRecord struct {
 	IOElements map[string]uint64 `json:"io_elements"`
 }
 
-// TelemetryMessage is the JSON envelope pushed to Kafka.
+// TelemetryMessage is the JSON envelope pushed to Kafka and streamed to clients.
 type TelemetryMessage struct {
 	IMEI            string      `json:"imei"`
 	Records         []AVLRecord `json:"records"`
 	Codec           string      `json:"codec"`
-	ServerTimestamp  string      `json:"server_timestamp"`
+	ServerTimestamp string      `json:"server_timestamp"`
+	RawHex          string      `json:"raw_hex,omitempty"`
 }
 
 // AVLPacket holds the full parsed packet metadata alongside the records.

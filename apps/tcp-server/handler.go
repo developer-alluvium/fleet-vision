@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -73,40 +72,29 @@ func handleConnection(conn net.Conn, producer *KafkaProducer) {
 		log.Printf("[PARSE] %s (IMEI %s) parsed %d records (codec=0x%02X)",
 			remoteAddr, imei, avlPacket.RecordCount, avlPacket.CodecID)
 
-		// Build the telemetry message
-		codecName := "codec8"
-		if avlPacket.CodecID == parser.CodecID8E {
-			codecName = "codec8e"
-		}
-		msg := parser.TelemetryMessage{
-			IMEI:           imei,
-			Records:        avlPacket.Records,
-			Codec:          codecName,
-			ServerTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		}
-
-		jsonBytes, err := json.Marshal(msg)
+		// Build the telemetry message with records and raw hex
+		jsonBytes, err := buildTelemetryMessage(imei, avlPacket, packet.data)
 		if err != nil {
 			log.Printf("[CONN] %s (IMEI %s) JSON marshal error: %v", remoteAddr, imei, err)
 			_ = sendACK(conn, 0)
 			continue
 		}
 
-		// ── Step 3: Produce to Kafka (synchronous) ───────────
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err = producer.Publish(ctx, imei, jsonBytes)
-		cancel()
+		// ── Step 3: Broadcast to remote /stream and /latest listeners ─
+		hub.Broadcast(jsonBytes, imei)
 
-		if err != nil {
-			log.Printf("[CONN] %s (IMEI %s) Kafka publish failed – NOT acknowledging device: %v",
-				remoteAddr, imei, err)
-			// Do NOT ACK the device – it will retry sending the same data
-			_ = sendACK(conn, 0)
-			continue
+		// ── Step 4: Optional Kafka publish (if configured) ───────────
+		if producer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			err = producer.Publish(ctx, imei, jsonBytes)
+			cancel()
+			if err != nil {
+				log.Printf("[CONN] %s (IMEI %s) Kafka unreachable (stream-only mode): %v",
+					remoteAddr, imei, err)
+			}
 		}
 
-		// ── Step 4: ACK the device ───────────────────────────
-		// Only after Kafka confirms the write
+		// ── Step 5: ACK the device ───────────────────────────
 		if err := sendACK(conn, int(avlPacket.RecordCount)); err != nil {
 			log.Printf("[CONN] %s (IMEI %s) Failed to send ACK: %v", remoteAddr, imei, err)
 			return // Connection broken, exit loop

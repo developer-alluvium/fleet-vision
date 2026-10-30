@@ -37,28 +37,45 @@ func main() {
 	log.Printf("│  Topic       : %s\n", kafkaTopic)
 	log.Println("└──────────────────────────────────────────────┘")
 
-	// ── Initialize Kafka Producer ────────────────────────────
-	producer := NewKafkaProducer(brokerList, kafkaTopic)
-	defer producer.Close()
+	// ── Initialize Kafka Producer (Optional) ─────────────────
+	var producer *KafkaProducer
+	if kafkaBrokers != "" && kafkaBrokers != "none" && kafkaBrokers != "disabled" {
+		producer = NewKafkaProducer(brokerList, kafkaTopic)
+		defer producer.Close()
+	} else {
+		log.Println("[KAFKA] Running in standalone stream mode (Kafka disabled)")
+	}
 
-	// ── Start Health Check HTTP Server ───────────────────────
+	// ── Start Remote Stream & Health HTTP Server ─────────────
 	healthMux := http.NewServeMux()
-	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok","service":"tcp-server"}`))
+	healthMux.HandleFunc("/healthz", handleHealth)
+	healthMux.HandleFunc("/stream", handleStream)
+	healthMux.HandleFunc("/latest", handleLatest)
+	healthMux.HandleFunc("/docs", handleSwaggerUI)
+	healthMux.HandleFunc("/swagger", handleSwaggerUI)
+	healthMux.HandleFunc("/openapi.json", handleOpenAPI)
+	healthMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/docs", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
 	})
+
 	healthServer := &http.Server{
 		Addr:    fmt.Sprintf(":%s", healthPort),
 		Handler: healthMux,
 	}
 	go func() {
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[HEALTH] Server error: %v", err)
+			log.Printf("[HTTP] Server error: %v", err)
 		}
 	}()
 	defer healthServer.Close()
-	log.Printf("[HEALTH] Listening on :%s/healthz", healthPort)
+	log.Printf("[API] Swagger UI documentation: http://0.0.0.0:%s/docs", healthPort)
+	log.Printf("[API] Remote telemetry stream:  http://0.0.0.0:%s/stream", healthPort)
+	log.Printf("[API] Latest telemetry cache:   http://0.0.0.0:%s/latest", healthPort)
+	log.Printf("[API] Health status endpoint:   http://0.0.0.0:%s/healthz", healthPort)
 
 	// ── Start TCP Listener ───────────────────────────────────
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", tcpPort))
@@ -77,7 +94,9 @@ func main() {
 		log.Printf("[SHUTDOWN] Received %v – shutting down…", sig)
 		listener.Close()
 		healthServer.Close()
-		producer.Close()
+		if producer != nil {
+			producer.Close()
+		}
 		os.Exit(0)
 	}()
 
