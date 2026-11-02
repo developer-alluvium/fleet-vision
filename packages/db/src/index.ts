@@ -62,6 +62,7 @@ if (process.env.NODE_ENV !== "production") {
   delete globalForPrisma.prisma;
   delete globalForPrisma.timescalePrisma;
 }
+// Schema version: SharedJourney support added
 
 // Primary database client (RDS in production, local container in development)
 export const prisma =

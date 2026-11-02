@@ -32,6 +32,8 @@ model Organization {
   devices   Device[]
   vehicles  Vehicle[]
   geofences Geofence[]
+  sharedJourneys        SharedJourney[]
+  maxShareDurationHours Float?          @default(72) @map("max_share_duration_hours")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -93,6 +95,7 @@ model Vehicle {
   // ── BLE Fuel Sensor ─────────────────────────────────────
   bleFuelChannel    Int?                   @default(1) @map("ble_fuel_channel") // 1–4 (which BLE sensor)
   calibrationPoints FuelCalibrationPoint[]
+  sharedJourneys    SharedJourney[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -283,3 +286,38 @@ model GeofenceViolationEpisode {
   @@index([organizationId, geofenceId, createdAt(sort: Desc)])
   @@map("geofence_violation_episodes")
 }
+
+/// A time-bounded, public share link for tracking a vehicle's live journey.
+model SharedJourney {
+  id             String       @id @default(cuid())
+  tokenHash      String       @unique @map("token_hash") @db.VarChar(64)
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicleId      String       @map("vehicle_id")
+  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  startsAt       DateTime     @map("starts_at") @db.Timestamptz
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz
+
+  status         String       @default("ACTIVE") // ACTIVE, REVOKED
+  revokedAt      DateTime?    @map("revoked_at") @db.Timestamptz
+  revokedBy      String?      @map("revoked_by")
+
+  label          String?
+  createdBy      String       @map("created_by")
+  accessCount    Int          @default(0) @map("access_count")
+  lastAccessedAt DateTime?    @map("last_accessed_at") @db.Timestamptz
+
+  showSpeed       Boolean     @default(true) @map("show_speed")
+  showVehicleInfo Boolean     @default(true) @map("show_vehicle_info")
+
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@index([organizationId, status])
+  @@index([expiresAt])
+  @@index([vehicleId, status])
+  @@map("shared_journeys")
+}
+

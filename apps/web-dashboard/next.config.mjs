@@ -20,4 +20,4 @@ const nextConfig = {
 
 export default nextConfig;
 
-// Triggered a hard restart to clear Prisma client from globalThis cache
+// Triggered restart to reload Prisma client with SharedJourney model support at 2026-10-31

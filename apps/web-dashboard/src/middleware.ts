@@ -6,7 +6,8 @@ const ALLOWED_ORIGINS = [
   "http://192.168.0.160:3000",
   "http://localhost:3001",
   "http://192.168.0.160:3001",
-  "http://localhost:3002"
+  "http://localhost:3002",
+  "https://track.fleetvision.app"
   // Add production frontend URL here
 ];
 
