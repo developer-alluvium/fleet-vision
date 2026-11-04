@@ -1,5 +1,6 @@
 import {
   prisma,
+  redis,
   getLiveMap,
   getFleetStatusDetails,
   computeDeviceStatus,
@@ -22,21 +23,33 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
   const nowMs = Date.now();
 
   try {
-    // 1. Fetch current registered devices
+    // 1. Fetch current registered devices with optional vehicle assignment
     const devices = await prisma.device.findMany({
       where: { organizationId: orgId },
-      select: { imei: true },
+      select: {
+        imei: true,
+        vehicle: {
+          select: {
+            plateNumber: true,
+          },
+        },
+      },
     });
 
     if (devices.length === 0) {
       return; // No devices, nothing to do
     }
 
-    // 2. Fetch current live map & previous statuses
-    const [liveMap, previousStatusMap] = await Promise.all([
+    // 2. Fetch current live map, previous statuses, and stale tracking set
+    const staleKey = `fleet_stale:org:${orgId}`;
+    const [liveMap, previousStatusMap, previousStaleArray] = await Promise.all([
       getLiveMap(orgId),
       getFleetStatusDetails(orgId),
+      redis.smembers(staleKey),
     ]);
+    const previousStaleImeis = new Set(previousStaleArray || []);
+    const newlyStaleImeis: string[] = [];
+    const recoveredImeis: string[] = [];
 
     // 3. Compute new status for each device and track metrics
     const newStatusMap: Record<string, string> = {};
@@ -48,8 +61,8 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
       INACTIVE: 0,
       NO_DATA: 0,
     };
-    const changedDevices: Array<{ imei: string; previousStatus: string; newStatus: string }> = [];
-    const activityFeed: Array<{ type: string; imei: string; timestamp: string; [key: string]: any }> = [];
+    const changedDevices: Array<{ imei: string; vehiclePlate?: string | null; previousStatus: string; newStatus: string }> = [];
+    const activityFeed: Array<{ type: string; imei: string; vehiclePlate?: string | null; timestamp: string; [key: string]: any }> = [];
 
     let fuelSum = 0;
     let fuelCount = 0;
@@ -68,6 +81,7 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
 
     for (const device of devices) {
       const imei = device.imei;
+      const vehiclePlate = device.vehicle?.plateNumber || null;
       const payload = liveMap[imei] as any;
       
       const newStatus = computeDeviceStatus(
@@ -84,12 +98,14 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
       if (prevStatus !== newStatus) {
         changedDevices.push({
           imei,
+          vehiclePlate,
           previousStatus: prevStatus || 'NO_DATA',
           newStatus,
         });
         activityFeed.push({
           type: "STATUS_CHANGE",
           imei,
+          vehiclePlate,
           from: prevStatus || 'NO_DATA',
           to: newStatus,
           timestamp: new Date(nowMs).toISOString(),
@@ -103,23 +119,32 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
         
         if (payload.fuelLevelLiters < CRITICAL_FUEL_THRESHOLD) {
           criticalFuelCount++;
-          // For now, emit activity feed event. Later, we can add redis deduplication.
-          activityFeed.push({
-            type: "CRITICAL_FUEL",
-            imei,
-            fuelLevelLiters: payload.fuelLevelLiters,
-            threshold: CRITICAL_FUEL_THRESHOLD,
-            timestamp: new Date(nowMs).toISOString(),
-          });
+          const alertKey = `fuel_alert:crit:${imei}`;
+          const isNew = await redis.set(alertKey, "1", "EX", 1800, "NX");
+          if (isNew === "OK") {
+            activityFeed.push({
+              type: "CRITICAL_FUEL",
+              imei,
+              vehiclePlate,
+              fuelLevelLiters: payload.fuelLevelLiters,
+              threshold: CRITICAL_FUEL_THRESHOLD,
+              timestamp: new Date(nowMs).toISOString(),
+            });
+          }
         } else if (payload.fuelLevelLiters < LOW_FUEL_THRESHOLD) {
           lowFuelCount++;
-          activityFeed.push({
-            type: "LOW_FUEL",
-            imei,
-            fuelLevelLiters: payload.fuelLevelLiters,
-            threshold: LOW_FUEL_THRESHOLD,
-            timestamp: new Date(nowMs).toISOString(),
-          });
+          const alertKey = `fuel_alert:low:${imei}`;
+          const isNew = await redis.set(alertKey, "1", "EX", 1800, "NX");
+          if (isNew === "OK") {
+            activityFeed.push({
+              type: "LOW_FUEL",
+              imei,
+              vehiclePlate,
+              fuelLevelLiters: payload.fuelLevelLiters,
+              threshold: LOW_FUEL_THRESHOLD,
+              timestamp: new Date(nowMs).toISOString(),
+            });
+          }
         }
 
         const f = payload.fuelLevelLiters;
@@ -141,14 +166,22 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
         
         if (ageMs < STALE_THRESHOLD_MS) {
           freshDataCount++;
+          if (previousStaleImeis.has(imei)) {
+            recoveredImeis.push(imei);
+          }
         } else if (ageMs < INACTIVE_THRESHOLD_MS) {
           staleDataCount++;
-          activityFeed.push({
-            type: "DEVICE_STALE",
-            imei,
-            ageMs,
-            timestamp: new Date(nowMs).toISOString(),
-          });
+          // ONLY push to activityFeed on fresh -> stale transition (not repeatedly on every batch)
+          if (!previousStaleImeis.has(imei)) {
+            newlyStaleImeis.push(imei);
+            activityFeed.push({
+              type: "DEVICE_STALE",
+              imei,
+              vehiclePlate,
+              ageMs,
+              timestamp: new Date(nowMs).toISOString(),
+            });
+          }
         }
         
         if (ageMs > oldestAge) { 
@@ -158,6 +191,14 @@ export async function recomputeFleetStatus(orgId: string): Promise<void> {
       } else {
         noDataCount++;
       }
+    }
+
+    // Sync stale devices set in Redis
+    if (recoveredImeis.length > 0 || newlyStaleImeis.length > 0) {
+      const pipeline = redis.pipeline();
+      if (recoveredImeis.length > 0) pipeline.srem(staleKey, ...recoveredImeis);
+      if (newlyStaleImeis.length > 0) pipeline.sadd(staleKey, ...newlyStaleImeis);
+      await pipeline.exec().catch(() => {});
     }
 
     const total = devices.length;

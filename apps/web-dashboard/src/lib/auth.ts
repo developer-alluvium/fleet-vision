@@ -46,7 +46,25 @@ export async function authenticate(request: NextRequest) {
         };
       }
     } catch (err) {
-      throw new Error("Invalid token");
+      // Access token expired or invalid, fall through to check refresh token
+    }
+  }
+
+  // 3. Fallback: Check for valid refresh token if access token is expired or missing
+  const refreshToken = request.cookies.get("refreshToken")?.value;
+  if (refreshToken) {
+    const storedToken = await prisma.refreshToken.findUnique({
+      where: { token: refreshToken },
+      include: { user: true },
+    });
+
+    if (storedToken && storedToken.expiresAt > new Date()) {
+      return {
+        userId: storedToken.user.id,
+        organizationId: storedToken.user.organizationId,
+        role: storedToken.user.role,
+        type: "jwt",
+      };
     }
   }
 

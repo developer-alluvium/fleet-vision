@@ -313,10 +313,11 @@ export interface FleetDashboardPayload {
   activityFeed: Array<{
     type: string;
     imei: string;
+    vehiclePlate?: string | null;
     timestamp: string;
     [key: string]: any;
   }>;
-  changed: Array<{ imei: string; previousStatus: string; newStatus: string }>;
+  changed: Array<{ imei: string; vehiclePlate?: string | null; previousStatus: string; newStatus: string }>;
   computedAt: string;
 }
 
