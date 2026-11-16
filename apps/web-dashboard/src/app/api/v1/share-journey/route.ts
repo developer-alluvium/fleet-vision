@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { vehicleId, imei, durationHours, label, showSpeed, showVehicleInfo } = body;
+    const { vehicleId, imei, durationHours, label, showSpeed, showVehicleInfo, baseUrl } = body;
 
     if (
       (!vehicleId || typeof vehicleId !== "string") &&
@@ -120,10 +120,30 @@ export async function POST(request: NextRequest) {
     });
 
     // Derive frontend public tracker URL
-    const publicTrackerBase =
-      process.env.PUBLIC_TRACKER_URL ||
-      request.headers.get("origin") ||
-      "http://localhost:8080";
+    let publicTrackerBase = "";
+
+    if (baseUrl && typeof baseUrl === "string" && /^https?:\/\//i.test(baseUrl)) {
+      publicTrackerBase = baseUrl.trim();
+    } else if (process.env.PUBLIC_TRACKER_URL?.trim()) {
+      publicTrackerBase = process.env.PUBLIC_TRACKER_URL.trim();
+    } else {
+      const forwardedHost = request.headers.get("x-forwarded-host");
+      const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+      const headerOrigin = request.headers.get("origin");
+      const referer = request.headers.get("referer");
+      let refererOrigin: string | null = null;
+      if (referer) {
+        try {
+          refererOrigin = new URL(referer).origin;
+        } catch {}
+      }
+
+      publicTrackerBase =
+        (forwardedHost ? `${forwardedProto}://${forwardedHost}` : null) ||
+        headerOrigin ||
+        refererOrigin ||
+        "http://localhost:8080";
+    }
 
     const shareUrl = `${publicTrackerBase.replace(/\/$/, "")}/shared/${rawToken}`;
 
