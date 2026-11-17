@@ -34,15 +34,22 @@ export async function GET(request: NextRequest) {
 
     let sinceDate: Date | null = null;
     if (since) {
-      const parsed = new Date(since);
-      if (!isNaN(parsed.getTime())) {
-        sinceDate = parsed;
+      if (since === "none" || since === "false" || since === "0") {
+        sinceDate = null;
       } else {
-        return new Response(JSON.stringify({ error: "Invalid since ISO date format" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
+        const parsed = new Date(since);
+        if (!isNaN(parsed.getTime())) {
+          sinceDate = parsed;
+        } else {
+          return new Response(JSON.stringify({ error: "Invalid since ISO date format" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
       }
+    } else {
+      // Default to last 6 hours so vehicle path history is immediately visible
+      sinceDate = new Date(Date.now() - 6 * 60 * 60 * 1000);
     }
 
     // 3. Verify device belongs to this organization

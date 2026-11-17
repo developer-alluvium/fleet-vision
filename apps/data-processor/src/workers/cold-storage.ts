@@ -5,8 +5,9 @@ import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 /**
  * Cold Storage Archival — Nightly Cron
  *
- * Exports telemetry records older than 6 months to compressed Parquet files,
- * then deletes the archived rows from TimescaleDB.
+ * Exports telemetry records older than 90 days to compressed Parquet files,
+ * then drops/purges the archived chunks from TimescaleDB.
+ * (0–7d uncompressed, 7–90d compressed columnar in TimescaleDB, 90+d Parquet cold storage).
  *
  * Production: Upload to AWS S3 before deleting.
  * Current: Writes to local filesystem (stubbed S3).
@@ -14,7 +15,7 @@ import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 const ARCHIVE_DIR =
   process.env.ARCHIVE_DIR || path.resolve(__dirname, "../../../../archives");
-const RETENTION_MONTHS = parseInt(process.env.RETENTION_MONTHS || "6", 10);
+const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "90", 10);
 const BATCH_SIZE = 10000;
 
 /**
@@ -28,18 +29,28 @@ export async function archiveColdStorage(): Promise<void> {
   }
 
   const cutoffDate = new Date();
-  if (process.env.RETENTION_HOURS) {
-    const hours = parseInt(process.env.RETENTION_HOURS, 10);
-    cutoffDate.setHours(cutoffDate.getHours() - hours);
-    console.log(
-      `[ARCHIVAL] Starting cold storage archival (retention: ${hours} hours)…`
-    );
-  } else {
-    cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
-    console.log(
-      `[ARCHIVAL] Starting cold storage archival (retention: ${RETENTION_MONTHS} months)…`
-    );
-  }
+
+  // ── Retention: 90 days old data (configurable via RETENTION_DAYS) ──────
+  cutoffDate.setDate(cutoffDate.getDate() - RETENTION_DAYS);
+  console.log(
+    `[ARCHIVAL] Starting cold storage archival (retention: ${RETENTION_DAYS} day(s))…`
+  );
+
+  /*
+  // ── Previous 6 Months Retention Logic (Commented Out) ────────────────────
+  // if (process.env.RETENTION_HOURS) {
+  //   const hours = parseInt(process.env.RETENTION_HOURS, 10);
+  //   cutoffDate.setHours(cutoffDate.getHours() - hours);
+  //   console.log(
+  //     `[ARCHIVAL] Starting cold storage archival (retention: ${hours} hours)…`
+  //   );
+  // } else {
+  //   cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
+  //   console.log(
+  //     `[ARCHIVAL] Starting cold storage archival (retention: ${RETENTION_MONTHS} months)…`
+  //   );
+  // }
+  */
 
   try {
     // ── 1. Count records to archive ──────────────────────────
@@ -145,15 +156,43 @@ export async function archiveColdStorage(): Promise<void> {
       `[ARCHIVAL] ⚠ S3 upload stubbed — file saved locally at ${filepath}`
     );
 
-    // ── 4. Delete archived rows from TimescaleDB ─────────────
-    const deleted: Array<{ count: bigint }> = await timescalePrisma.$queryRawUnsafe(
-      `DELETE FROM "telemetry_records" WHERE "time" < $1`,
-      cutoffDate
-    );
+    // ── 4. Drop archived chunks from TimescaleDB (if purge enabled) ──────────
+    const PURGE_AFTER_ARCHIVE = process.env.PURGE_AFTER_ARCHIVE !== "false";
+    if (PURGE_AFTER_ARCHIVE) {
+      // 4a. Drop TimescaleDB chunks older than cutoffDate (works seamlessly on compressed chunks)
+      try {
+        await timescalePrisma.$executeRawUnsafe(
+          `SELECT drop_chunks('telemetry_records', older_than => $1::timestamptz);`,
+          cutoffDate
+        );
+        console.log(
+          `[ARCHIVAL] ✓ Dropped TimescaleDB chunks older than ${cutoffDate.toISOString()}`
+        );
+      } catch (chunkErr) {
+        console.warn(
+          "[ARCHIVAL] Notice: drop_chunks skipped or not a hypertable:",
+          chunkErr instanceof Error ? chunkErr.message : chunkErr
+        );
+      }
 
-    console.log(
-      `[ARCHIVAL] ✓ Deleted archived records from TimescaleDB (cutoff: ${cutoffDate.toISOString()})`
-    );
+      // 4b. Cleanup any uncompressed rows (fallback if table is standard postgres or chunk boundary residual)
+      try {
+        await timescalePrisma.$executeRawUnsafe(
+          `DELETE FROM "telemetry_records" WHERE "time" < $1`,
+          cutoffDate
+        );
+        console.log(
+          `[ARCHIVAL] ✓ Purged remaining uncompressed records older than ${cutoffDate.toISOString()}`
+        );
+      } catch (delErr) {
+        // If all matching chunks were already compressed and dropped, direct delete is either zero rows or unsupported on compressed tables
+        console.log("[ARCHIVAL] Cleanup complete (compressed chunks dropped).");
+      }
+    } else {
+      console.log(
+        `[ARCHIVAL] ℹ PURGE_AFTER_ARCHIVE=false — kept records in TimescaleDB (backup-only mode)`
+      );
+    }
     console.log("[ARCHIVAL] ✓ Cold storage archival complete");
   } catch (err) {
     console.error("[ARCHIVAL] ✗ Error during archival:", err);

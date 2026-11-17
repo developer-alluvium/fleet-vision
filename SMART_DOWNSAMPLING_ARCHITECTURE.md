@@ -734,14 +734,15 @@ Even after Smart Downsampling reduces writes by 80%, apply TimescaleDB compressi
 -- 1. Enable native columnar compression
 ALTER TABLE "telemetry_records" SET (
   timescaledb.compress,
-  timescaledb.compress_segmentby = '"organizationId", imei',
-  timescaledb.compress_orderby = 'time DESC'
+  timescaledb.compress_segmentby = 'organization_id, imei',
+  timescaledb.compress_orderby = 'time DESC, id'
 );
 
--- 2. Auto-compress chunks older than 2 days
-SELECT add_compression_policy('"telemetry_records"', INTERVAL '2 days');
+-- 2. Auto-compress chunks older than 7 days (0–7 days uncompressed hot tier)
+SELECT add_compression_policy('"telemetry_records"', INTERVAL '7 days');
 
--- 3. Auto-delete raw data older than 90 days (configurable per tier)
+-- 3. Chunks 90+ days are archived to Parquet cold storage via the cold-storage worker and dropped
+-- (Retention can also be enforced natively or via the Parquet archival cron)
 SELECT add_retention_policy('"telemetry_records"', INTERVAL '90 days');
 ```
 

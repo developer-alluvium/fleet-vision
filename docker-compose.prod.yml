@@ -70,7 +70,7 @@ services:
       NODE_ENV: production
       # Connect to TimescaleDB container via Docker network
       TIMESCALE_URL: "postgresql://${TIMESCALE_USER:-postgres}:${TIMESCALE_PASSWORD}@timescaledb:5432/fleet_vision?schema=public"
-      RETENTION_MONTHS: "${RETENTION_MONTHS:-6}"
+      RETENTION_DAYS: "${RETENTION_DAYS:-90}"
       STALE_THRESHOLD_MINUTES: "${STALE_THRESHOLD_MINUTES:-5}"
       INACTIVE_THRESHOLD_HOURS: "${INACTIVE_THRESHOLD_HOURS:-24}"
       ARCHIVE_DIR: "${ARCHIVE_DIR:-/app/archives}"

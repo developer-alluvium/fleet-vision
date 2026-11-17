@@ -1619,7 +1619,7 @@ export async function GET(request: NextRequest) {
           description:
             "Establishes a zero-gap Server-Sent Events (SSE) stream for tracking a single vehicle's journey in real time.\n\n" +
             "**Events emitted:**\n" +
-            "- `journey:history`: Emitted upon connection if `since` parameter is provided.\n" +
+            "- `journey:history`: Emitted upon connection with historical points (defaults to the last 6 hours if `since` is omitted so recent path is immediately visible).\n" +
             "- `journey:point`: Continuous live stream of every incoming telemetry record.",
           security: [{ bearerAuth: [] }, { apiKeyAuth: [] }, { cookieAuth: [] }],
           parameters: [
@@ -1642,7 +1642,7 @@ export async function GET(request: NextRequest) {
               in: "query",
               required: false,
               schema: { type: "string", format: "date-time" },
-              description: "ISO 8601 start timestamp for historical replay before live stream.",
+              description: "ISO 8601 start timestamp for historical replay before live stream. Defaults to the last 6 hours (Date.now() - 6h) to ensure sufficient visible path on map. Pass 'none' to skip historical catch-up.",
             },
           ],
           responses: {

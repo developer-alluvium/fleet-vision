@@ -36,6 +36,10 @@
     "docker:prod:build": "docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml build",
     "docker:prod:push": "docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml push",
     "db:push:timescale": "sh -c 'TS_USER=$(grep -E \"^TIMESCALE_USER=\" .env.production 2>/dev/null | cut -d= -f2- | tr -d \"\\\"\" || echo postgres); TS_PASS=$(grep -E \"^TIMESCALE_PASSWORD=\" .env.production 2>/dev/null | cut -d= -f2- | tr -d \"\\\"\"); DATABASE_URL=\"postgresql://${TS_USER:-postgres}:${TS_PASS}@localhost:5433/fleet_vision?schema=public\" npx prisma db push --schema=packages/db/prisma/schema.prisma && docker exec fv-timescaledb psql -U ${TS_USER:-postgres} -d fleet_vision -f /docker-entrypoint-initdb.d/010-init-timescaledb.sql'",
+    "db:apply:policies": "node scripts/apply-timescaledb-policies.js",
+    "db:seed:user": "node scripts/seed-user.js",
+    "db:seed:fleet": "node scripts/register-fleet-devices.js",
+    "db:seed": "node scripts/seed-user.js && node scripts/register-fleet-devices.js",
     "stream:listen": "node scripts/stream-client.js",
     "bridge:ec2": "node scripts/bridge-ec2-to-local-kafka.js"
   },

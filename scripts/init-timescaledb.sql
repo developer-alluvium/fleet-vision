@@ -29,18 +29,18 @@ BEGIN
     BEGIN
       ALTER TABLE "telemetry_records" SET (
         timescaledb.compress,
-        timescaledb.compress_segmentby = '"organizationId", imei',
-        timescaledb.compress_orderby = 'time DESC'
+        timescaledb.compress_segmentby = 'organization_id, imei',
+        timescaledb.compress_orderby = 'time DESC, id'
       );
       RAISE NOTICE 'TimescaleDB: Columnar compression enabled for telemetry_records';
     EXCEPTION WHEN OTHERS THEN
       RAISE NOTICE 'TimescaleDB: Compression already enabled or notice: %', SQLERRM;
     END;
 
-    -- Add automated compression policy (compress chunks older than 2 days)
+    -- Add automated compression policy (compress chunks older than 7 days)
     BEGIN
-      PERFORM add_compression_policy('telemetry_records', INTERVAL '2 days', if_not_exists => TRUE);
-      RAISE NOTICE 'TimescaleDB: Compression policy (2 days) configured';
+      PERFORM add_compression_policy('telemetry_records', INTERVAL '7 days', if_not_exists => TRUE);
+      RAISE NOTICE 'TimescaleDB: Compression policy (7 days) configured';
     EXCEPTION WHEN OTHERS THEN
       RAISE NOTICE 'TimescaleDB: Compression policy notice: %', SQLERRM;
     END;

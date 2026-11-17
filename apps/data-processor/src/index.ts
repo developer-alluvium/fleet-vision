@@ -68,13 +68,13 @@ async function main(): Promise<void> {
     }
   }, 30_000);
 
-  // Schedule Cold Storage Archival (Daily at 2:30 PM)
+  // Schedule Cold Storage Archival / Parquet Backup (Daily at 3:00 AM)
   const ENABLE_COLD_STORAGE = process.env.ENABLE_COLD_STORAGE === "true";
   if (ENABLE_COLD_STORAGE) {
-    cron.schedule("30 14 * * *", () => {
-      console.log("[CRON] Triggering scheduled cold storage archival...");
+    cron.schedule("0 3 * * *", () => {
+      console.log("[CRON] Triggering scheduled daily Parquet archival/backup (3:00 AM)...");
       archiveColdStorage().catch((err) => {
-        console.error("[CRON] ✗ Error during scheduled archival:", err);
+        console.error("[CRON] ✗ Error during scheduled archival/backup:", err);
       });
     });
   } else {

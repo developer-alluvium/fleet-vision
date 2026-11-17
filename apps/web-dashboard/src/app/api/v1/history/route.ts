@@ -73,13 +73,11 @@ export async function GET(request: NextRequest) {
 
     const queryStartTime = Date.now();
 
-    const RETENTION_MONTHS = parseInt(process.env.RETENTION_MONTHS || "6", 10);
+    // ── Retention: 90 days hot+warm in TimescaleDB (0-7d uncompressed, 7-90d compressed) ──────
+    // Older than 90 days is queried from Parquet cold storage (configurable via RETENTION_DAYS)
+    const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "90", 10);
     const cutoffDate = new Date();
-    if (process.env.RETENTION_HOURS) {
-      cutoffDate.setHours(cutoffDate.getHours() - parseInt(process.env.RETENTION_HOURS, 10));
-    } else {
-      cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
-    }
+    cutoffDate.setDate(cutoffDate.getDate() - RETENTION_DAYS);
 
     let records: any[] = [];
 
